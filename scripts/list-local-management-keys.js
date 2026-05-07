@@ -2,7 +2,25 @@ const fs = require("node:fs/promises")
 const path = require("node:path")
 const os = require("node:os")
 
-const KEY_ROOT = process.env.KEY_ROOT || path.join(os.homedir(), ".mpa")
+function resolveKeyRoot(envValue) {
+  const raw = typeof envValue === "string" ? envValue.trim() : ""
+  if (!raw) {
+    return path.join(os.homedir(), ".mpa")
+  }
+  if (raw === "~") {
+    return path.join(os.homedir(), ".mpa")
+  }
+  if (raw.startsWith("~/") || raw.startsWith("~\\")) {
+    let rest = raw.slice(2).replace(/^[\\/]+/, "")
+    if (!rest) {
+      return path.join(os.homedir(), ".mpa")
+    }
+    return path.join(os.homedir(), rest)
+  }
+  return path.resolve(raw)
+}
+
+const KEY_ROOT = resolveKeyRoot(process.env.KEY_ROOT)
 const KEY_DIR = path.join(KEY_ROOT, "management_keys")
 
 function detectPrivateKeyFormat(content) {

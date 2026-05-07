@@ -24,7 +24,7 @@ import { registerNodeTools } from "./node.js"
 import { registerKeyTools } from "./management_keys.js"
 import { registerKeyGenTools } from "./keygen.js"
 import path from "path"
-import os from "os"
+import { resolveKeyRoot } from "./key-root.js"
 
 // Create server instance
 const server = new McpServer({
@@ -44,7 +44,7 @@ const server = new McpServer({
 
 const MPC_AUTH_URL = process.env.MPC_AUTH_URL ?? "http://localhost"
 const MPC_AUTH_PORT = process.env.MPC_AUTH_PORT ?? "8080"
-const KEY_ROOT = process.env.KEY_ROOT ?? path.join(os.homedir(), ".mpa")
+const KEY_ROOT = resolveKeyRoot(process.env.KEY_ROOT)
 const DOCS_ROOT = path.join(process.cwd(), "resources")
 
 type ManagementKeyOption = {
