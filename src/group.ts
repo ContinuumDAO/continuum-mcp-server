@@ -38,7 +38,7 @@ type GroupToolsDeps = {
   mgtPOST: <T>(path: string, body?: BodyInit | object, params?: string | URLSearchParams | QueryParams) => Promise<T>
   toMcpApiError: (message: string, data?: unknown) => Error
   fetchManagementKeyOptions: () => Promise<ManagementKeyOption[]>
-  getManagementKeyOptionByIndex: (keyOptions: ManagementKeyOption[], signerIndex: number) => Promise<ManagementKeyOption>
+  resolveManagementSigningKeyOption: (keyOptions: ManagementKeyOption[]) => Promise<ManagementKeyOption>
   buildManagementSigningMessage: (bodyWithEmptySig: Record<string, unknown>) => string
   signManagementMessage: (option: ManagementKeyOption, message: string) => Promise<Sig>
 }
@@ -50,7 +50,7 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
     mgtPOST,
     toMcpApiError,
     fetchManagementKeyOptions,
-    getManagementKeyOptionByIndex,
+    resolveManagementSigningKeyOption,
     buildManagementSigningMessage,
     signManagementMessage,
   } = deps
@@ -106,10 +106,9 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
   server.registerTool(
     "accept_group_request",
     {
-      description: "Agree to a pending incoming group request by request ID using signer index (0=bootstrap, N=added_key_N).",
+      description: "Agree to a pending incoming group request by request ID using preferred signer (or first locally-usable allowed signer).",
       inputSchema: z.object({
         requestId: GroupRequestIdSchema,
-        signerIndex: z.number().int().nonnegative(),
       }),
       outputSchema: z.object({
         message: z.string(),
@@ -123,7 +122,7 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
         signingMessage: z.string(),
       }),
     },
-    async ({ requestId, signerIndex }: { requestId: GroupRequestId; signerIndex: number }): Promise<CallToolResult> => {
+    async ({ requestId }: { requestId: GroupRequestId }): Promise<CallToolResult> => {
       const requestRaw = await mgtGET<unknown>("/getNewGroupRequestById", new URLSearchParams({ id: requestId }))
       const request = normalizeGroupRequest(requestRaw, "accept_group_request.request", toMcpApiError)
       if (request.status !== "pending") {
@@ -134,15 +133,17 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
       }
 
       const keyOptions = await fetchManagementKeyOptions()
-      const selectedSigningKey = await getManagementKeyOptionByIndex(keyOptions, signerIndex)
+      const selectedSigningKey = await resolveManagementSigningKeyOption(keyOptions)
+      const nodeKey = await mgtGET<NodeId>("/getNodeKey")
       const unsignedBody = {
+        nodeKey,
         requestId,
-        nonce: selectedSigningKey.nonce,
-        sig: "",
+        Nonce: selectedSigningKey.nonce,
+        Sig: "",
       }
       const signingMessage = buildManagementSigningMessage(unsignedBody)
       const signature = await signManagementMessage(selectedSigningKey, signingMessage)
-      const body = { ...unsignedBody, sig: signature }
+      const body = { ...unsignedBody, Sig: signature }
       const output = await mgtPOST<string>("/newGroupRequestAgree", body)
 
       return {
@@ -155,10 +156,9 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
   server.registerTool(
     "create_group_request",
     {
-      description: "Create a new MPC group request from explicit node IDs and signer index. Use list_available_node_ids/list_valid_group_node_sets first, then supply nodeIds (must include your node, be from configured nodes, min 2, and not already exist).",
+      description: "Create a new MPC group request from explicit node IDs. Uses preferred signer (or first locally-usable allowed signer). Use list_available_node_ids/list_valid_group_node_sets first; nodeIds must include your node, be from configured nodes, min 2, and not already exist.",
       inputSchema: z.object({
         nodeIds: z.array(NodeIdSchema).min(2),
-        signerIndex: z.number().int().nonnegative(),
       }),
       outputSchema: z.object({
         groupRequestId: GroupRequestIdSchema,
@@ -174,10 +174,8 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
     },
     async ({
       nodeIds,
-      signerIndex,
     }: {
       nodeIds: NodeId[]
-      signerIndex: number
     }): Promise<CallToolResult> => {
       const nodeIdOptions = await fetchNodeIds(mgtGET)
       const selfNodeId = await mgtGET<NodeId>("/getNodeKey")
@@ -204,11 +202,11 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
       }
 
       const keyOptions = await fetchManagementKeyOptions()
-      const selectedSigningKey = await getManagementKeyOptionByIndex(keyOptions, signerIndex)
-      const unsignedBody = buildNewGroupUnsignedBody(keyList, [], selectedSigningKey.nonce)
+      const selectedSigningKey = await resolveManagementSigningKeyOption(keyOptions)
+      const unsignedBody = buildNewGroupUnsignedBody(keyList, [], selfNodeId, selectedSigningKey.nonce)
       const signingMessage = buildManagementSigningMessage(unsignedBody)
       const signature = await signManagementMessage(selectedSigningKey, signingMessage)
-      const body = { ...unsignedBody, sig: signature }
+      const body = { ...unsignedBody, Sig: signature }
       const output = await mgtPOST<GroupRequestId>("/newGroupRequest", body)
       return {
         content: [{ type: "text", text: JSON.stringify({ groupRequestId: output, selectedSigningKey, signingMessage }) }],
@@ -385,15 +383,17 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
   )
 }
 
-function buildNewGroupUnsignedBody(keyList: NodeId[], brokerArray: string[], nonce: Nonce): {
-  nonce: Nonce
-  sig: ""
+function buildNewGroupUnsignedBody(keyList: NodeId[], brokerArray: string[], nodeKey: NodeId, nonce: Nonce): {
+  nodeKey: NodeId
+  Nonce: Nonce
+  Sig: ""
   keyList: NodeId[]
   BrokerArray: string[]
 } {
   return {
-    nonce,
-    sig: "",
+    nodeKey,
+    Nonce: nonce,
+    Sig: "",
     keyList,
     BrokerArray: brokerArray,
   }

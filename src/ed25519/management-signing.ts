@@ -1,6 +1,6 @@
 import { promises as fs } from "fs"
 import path from "path"
-import { createPrivateKey, sign as signWithPrivateKey, KeyObject } from "crypto"
+import { createPrivateKey, createPublicKey, sign as signWithPrivateKey, KeyObject } from "crypto"
 import { importUnencryptedOpenSshEd25519PrivateKeyFromPem } from "./openssh-ed25519.js"
 
 export type ManagementKeyOption = {
@@ -25,6 +25,144 @@ type MgtGet = <T>(
   params?: string | URLSearchParams | QueryParams,
   target?: { host?: string; port?: string | number },
 ) => Promise<T>
+
+export async function resolvePreferredManagementKeyOption(
+  keyOptions: ManagementKeyOption[],
+  deps: {
+    keyRoot: string
+    toMcpApiError: ToMcpApiError
+    mgtGET: MgtGet
+  },
+): Promise<ManagementKeyOption> {
+  const { keyRoot, toMcpApiError, mgtGET } = deps
+  const preferred = await getPreferredSignerPublicKeyHex({ mgtGET, toMcpApiError })
+  const failures: Array<{ key: string; reason: string }> = []
+  if (preferred) {
+    try {
+      const normalizedPreferred = normalizeEd25519PublicKeyToHex(preferred, toMcpApiError)
+      const selected = keyOptions.find((opt) => normalizeEd25519PublicKeyToHex(opt.value, toMcpApiError) === normalizedPreferred)
+      if (!selected) {
+        throw toMcpApiError("Preferred signer is not in allowed management keys", {
+          preferredSigner: normalizedPreferred,
+          allowedKeys: keyOptions.map((k) => k.value),
+        })
+      }
+      await ensureLocalKeyPairForPublicKey(normalizedPreferred, { keyRoot, toMcpApiError })
+      return selected
+    } catch (error) {
+      failures.push({ key: preferred, reason: error instanceof Error ? error.message : String(error) })
+    }
+  }
+  for (const opt of keyOptions) {
+    try {
+      await ensureLocalKeyPairForPublicKey(opt.value, { keyRoot, toMcpApiError })
+      return opt
+    } catch (error) {
+      failures.push({ key: opt.value, reason: error instanceof Error ? error.message : String(error) })
+    }
+  }
+  throw toMcpApiError(
+    "No preferred signer is set, and no allowed management key has a usable local private key in KEY_ROOT/management_keys",
+    { failures },
+  )
+}
+
+export async function getPreferredSignerPublicKeyHex(
+  deps: { mgtGET: MgtGet; toMcpApiError: ToMcpApiError },
+): Promise<string | undefined> {
+  const { mgtGET, toMcpApiError } = deps
+  try {
+    const raw = await mgtGET<unknown>("/getPreferredSigner")
+    if (typeof raw === "string") {
+      const s = raw.trim()
+      return s ? normalizeEd25519PublicKeyToHex(s, toMcpApiError) : undefined
+    }
+    if (raw && typeof raw === "object") {
+      const obj = raw as Record<string, unknown>
+      const candidate = [obj.publicKeyHex, obj.publicKey, obj.key].find((v) => typeof v === "string") as string | undefined
+      if (!candidate || candidate.trim().length === 0) {
+        return undefined
+      }
+      return normalizeEd25519PublicKeyToHex(candidate, toMcpApiError)
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+export async function ensureLocalKeyPairForPublicKey(
+  publicKey: string,
+  deps: { keyRoot: string; toMcpApiError: ToMcpApiError },
+): Promise<{ fileName: string; publicKeyPath: string; privateKeyPath: string }> {
+  const { keyRoot, toMcpApiError } = deps
+  const keyDir = path.join(keyRoot, "management_keys")
+  const normalizedTarget = normalizeEd25519PublicKeyToHex(publicKey, toMcpApiError)
+  let entries: string[]
+  try {
+    entries = await fs.readdir(keyDir)
+  } catch (error) {
+    throw toMcpApiError("Key directory not found", { keyDirectory: keyDir, reason: error instanceof Error ? error.message : String(error) })
+  }
+  const pubFiles = entries.filter((e) => e.endsWith(".pub"))
+  let matched: { fileName: string; publicKeyPath: string; privateKeyPath: string } | undefined
+  for (const pubFile of pubFiles) {
+    const publicKeyPath = path.join(keyDir, pubFile)
+    let raw: string
+    try {
+      raw = (await fs.readFile(publicKeyPath, "utf8")).trim()
+    } catch {
+      continue
+    }
+    let normalized: string
+    try {
+      normalized = normalizeEd25519PublicKeyToHex(raw, toMcpApiError)
+    } catch {
+      continue
+    }
+    if (normalized === normalizedTarget) {
+      const fileName = pubFile.slice(0, -4)
+      matched = { fileName, publicKeyPath, privateKeyPath: path.join(keyDir, fileName) }
+      break
+    }
+  }
+  if (!matched) {
+    throw toMcpApiError("Preferred signer key does not exist locally in KEY_ROOT/management_keys", {
+      preferredKey: normalizedTarget,
+      keyDirectory: keyDir,
+    })
+  }
+
+  let secret: string
+  try {
+    secret = (await fs.readFile(matched.privateKeyPath, "utf8")).trim()
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      throw toMcpApiError("Preferred signer key does not have a corresponding private key", {
+        preferredKey: normalizedTarget,
+        expectedPrivateKeyPath: matched.privateKeyPath,
+      })
+    }
+    throw toMcpApiError("Preferred signer private key is inaccessible", {
+      preferredKey: normalizedTarget,
+      privateKeyPath: matched.privateKeyPath,
+      reason,
+    })
+  }
+
+  const parsed = parseManagementPrivateKey(secret, matched.privateKeyPath, toMcpApiError)
+  const derived = derivePublicKeyHexFromPrivateKey(parsed)
+  if (derived !== normalizedTarget) {
+    throw toMcpApiError("Preferred signer private key does not match the specified public key", {
+      preferredKey: normalizedTarget,
+      derivedPublicKey: derived,
+      privateKeyPath: matched.privateKeyPath,
+      publicKeyPath: matched.publicKeyPath,
+    })
+  }
+  return matched
+}
 
 export function normalizeEd25519PublicKeyToHex(value: string, toMcpApiError: ToMcpApiError): string {
   const trimmed = value.trim()
@@ -105,55 +243,6 @@ export async function listLocalManagementPublicKeys(
     }
   }
   return results
-}
-
-export async function getManagementKeyOptionByIndex(
-  keyOptions: ManagementKeyOption[],
-  signerIndex: number,
-  deps: {
-    keyRoot: string
-    toMcpApiError: ToMcpApiError
-  },
-): Promise<ManagementKeyOption> {
-  const { keyRoot, toMcpApiError } = deps
-  const localKeys = await listLocalManagementPublicKeys(keyRoot, toMcpApiError)
-  const byPublicKey = new Map(localKeys.filter((k) => k.publicKeyHex).map((k) => [k.publicKeyHex as string, k.fileName] as const))
-
-  if (signerIndex === 0) {
-    const bootstrap = keyOptions.find((option) => {
-      const fileName = byPublicKey.get(normalizeEd25519PublicKeyToHex(option.value, toMcpApiError))
-      return fileName !== undefined && !/^added_key_\d+$/i.test(fileName)
-    })
-    if (!bootstrap) {
-      throw toMcpApiError("Could not resolve bootstrap signer key (index 0). Ensure a non-added_key_* local key exists.")
-    }
-    return bootstrap
-  }
-
-  const expectedFileName = `added_key_${signerIndex}`
-  const expectedLocal = localKeys.find((k) => k.fileName === expectedFileName)
-  if (!expectedLocal) {
-    throw toMcpApiError("Signer index does not map to a local key file", { signerIndex, expectedFileName })
-  }
-  if (!expectedLocal.publicKeyHex) {
-    throw toMcpApiError("Local signer .pub could not be converted to 32-byte hex for API matching", {
-      signerIndex,
-      expectedFileName,
-      publicKeyRaw: expectedLocal.publicKeyRaw,
-    })
-  }
-
-  const selected = keyOptions.find(
-    (option) => normalizeEd25519PublicKeyToHex(option.value, toMcpApiError) === expectedLocal.publicKeyHex,
-  )
-  if (!selected) {
-    throw toMcpApiError("Signer key exists locally but is not currently authorized by management API", {
-      signerIndex,
-      expectedFileName,
-      publicKey: expectedLocal.publicKeyHex,
-    })
-  }
-  return selected
 }
 
 export function buildManagementSigningMessage(bodyWithEmptySig: Record<string, unknown>): string {
@@ -368,6 +457,23 @@ function signEd25519DerHex(privateKeyDerHex: string, message: string): Buffer {
   })
   assertEd25519KeyObject(keyObject, "DER PKCS#8")
   return signWithPrivateKey(null, Buffer.from(message, "utf8"), keyObject)
+}
+
+function derivePublicKeyHexFromPrivateKey(parsed: { secret: string; format: "OPENSSH" | "PEM" | "DER_HEX" }): string {
+  const keyObject = parsed.format === "DER_HEX"
+    ? createPrivateKey({
+      key: Buffer.from(parsed.secret.replace(/^0x/i, "").replace(/\s+/g, ""), "hex"),
+      format: "der",
+      type: "pkcs8",
+    })
+    : loadEd25519KeyObjectFromArmoredPem(parsed.secret)
+  assertEd25519KeyObject(keyObject, "derive public from private")
+  const pub = createPublicKey(keyObject)
+  const jwk = pub.export({ format: "jwk" }) as { x?: string }
+  if (!jwk.x) {
+    throw new Error("could not derive Ed25519 public key from private key")
+  }
+  return Buffer.from(jwk.x, "base64url").toString("hex")
 }
 
 /** PEM armored labels that indicate a PKCS#8 / OpenSSH-style private key block (case-insensitive). */

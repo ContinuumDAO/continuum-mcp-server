@@ -15,11 +15,10 @@ async function main() {
       throw new Error("No management keys returned by list_management_keys")
     }
 
-    const signerIndex = Number.isInteger(keys[0].signerIndex) ? keys[0].signerIndex : 0
     const nodeIds = validPairs[0]
     const res = await client.callTool({
       name: "create_group_request",
-      arguments: { nodeIds, signerIndex },
+      arguments: { nodeIds },
     })
     console.log(JSON.stringify(res, null, 2))
   } finally {

@@ -9,9 +9,9 @@ That key can later be used in signing workflows.
 
 ## Primary tools
 
-- `create_keygen_request`
-  - Starts keygen for a group with threshold/key type/msgCheck and signer index.
-- `accept_keygen_request`
+- `create_mpc_keygen_request`
+  - Starts keygen for a group with threshold/key type/msgCheck using preferred signer (or fallback signer).
+- `accept_mpc_keygen_request`
   - Accepts a pending keygen request as another group member.
 - `list_mpc_keygen_requests`
   - Lists keygen requests with filter/pagination.
@@ -26,17 +26,16 @@ That key can later be used in signing workflows.
 
 1. Ensure group exists and members agreed
    - Validate via group tools before keygen.
-2. Choose signing key
-   - Use `list_management_keys` and pick `signerIndex`.
+2. (Optional) set preferred signer
+   - Use `set_preferred_management_key`.
 3. Create request
-   - Call `create_keygen_request` with:
+   - Call `create_mpc_keygen_request` with:
      - `groupId`
      - `threshold`
      - `msgCheck`
      - `keyType`
-     - `signerIndex`
 4. Peers accept
-   - Each member calls `accept_keygen_request`.
+   - Each member calls `accept_mpc_keygen_request`.
 5. Track progress
    - Poll `list_mpc_keygen_requests` / `get_mpc_keygen_request_by_id`.
 6. Read result
@@ -53,9 +52,9 @@ That key can later be used in signing workflows.
 
 Both create and accept tools use the same management signing pattern:
 
-- resolve signer from `signerIndex`
+- resolve signer from preferred signer (or fallback local allowed signer)
 - use signer nonce
-- build canonical body (`sig: ""`)
+- build canonical body (`nodeKey`, `Nonce`, `Sig: ""`)
 - sign canonical message
 - submit signed request
 

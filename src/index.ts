@@ -1,12 +1,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
-import { ErrorCode, McpError, CallToolResult } from "@modelcontextprotocol/sdk/types.js"
-import { z } from "zod"
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js"
 import { promises as fs } from "fs"
 import {
   normalizeEd25519PublicKeyToHex as normalizeEd25519PublicKeyToHexBase,
   listLocalManagementPublicKeys as listLocalManagementPublicKeysBase,
-  getManagementKeyOptionByIndex as getManagementKeyOptionByIndexBase,
+  resolvePreferredManagementKeyOption as resolvePreferredManagementKeyOptionBase,
+  ensureLocalKeyPairForPublicKey as ensureLocalKeyPairForPublicKeyBase,
+  getPreferredSignerPublicKeyHex as getPreferredSignerPublicKeyHexBase,
   buildManagementSigningMessage as buildManagementSigningMessageBase,
   signManagementMessage as signManagementMessageBase,
   getPrivateKeyStatus as getPrivateKeyStatusBase,
@@ -14,63 +15,11 @@ import {
   type LocalManagementKeyEntry,
 } from "./ed25519/management-signing.js"
 import {
-  KeyTypeSchema,
-  MsgCheckSchema,
-  FilterSchema,
-  StatusSchema,
-  ECDSAPubKeySchema,
-  ECDSAAddressSchema,
-  ECDSASigSchema,
-  EdDSAPubKeySchema,
-  EdDSASigSchema,
-  PubKeySchema,
-  NodeIdSchema,
-  GroupIdSchema,
-  NonceSchema,
-  ManagementSigSchema,
-  GroupRequestIdSchema,
-  KeyGenIdSchema,
-  LogsSchema,
-  MessageToSignResponseSchema,
-  MqttKeySchema,
-  ConfigUpdatePlanResponseSchema,
-  ConfigUpdateImplementResponseSchema,
-  MachineInfoSchema,
-  GroupRequestSchema,
-  GroupResultSchema,
-  GroupSchema,
-  SubscriptionSchema,
-  NodeConnectivityResultSchema,
-  ConfiguredNodeSchema,
-  type Key,
-  type MsgCheck,
-  type Filter,
-  type Status,
-  type Logs,
-  type MachineInfo,
-  type GroupRequest,
-  type GroupResult,
-  type ECDSAPubKey,
-  type ECDSAAddress,
-  type ECDSASig,
   type EdDSAPubKey,
-  type EdDSASig,
-  type NodeId,
-  type GroupId,
   type Nonce,
-  type Sig,
-  type GroupRequestId,
-  type KeyGenId,
-  type Subscription,
-  type NodeConnectivityResult,
-  type ConfiguredNode,
-  type MessageToSignResponse,
-  type MqttKey,
-  type ConfigUpdatePlanResponse,
-  type ConfigUpdateImplementResponse,
+  type Sig
 } from "./types.js"
 import { registerGroupTools } from "./group.js"
-import { registerSigningTools } from "./signing.js"
 import { registerNodeTools } from "./node.js"
 import { registerKeyTools } from "./management_keys.js"
 import { registerKeyGenTools } from "./keygen.js"
@@ -86,11 +35,15 @@ const server = new McpServer({
     tools: {
       listChanged: true,
     },
+    resources: {
+      subscribe: true,
+      listChanged: true
+    }
   },
 })
 
-const MPC_AUTH_URL = "http://localhost"
-const MPC_AUTH_PORT = "8080"
+const MPC_AUTH_URL = process.env.MPC_AUTH_URL ?? "http://localhost"
+const MPC_AUTH_PORT = process.env.MPC_AUTH_PORT ?? "8080"
 const KEY_ROOT = process.env.KEY_ROOT ?? path.join(os.homedir(), ".mpa")
 const DOCS_ROOT = path.join(process.cwd(), "resources")
 
@@ -138,12 +91,19 @@ async function listLocalManagementPublicKeys(): Promise<LocalManagementKeyEntry[
   return listLocalManagementPublicKeysBase(KEY_ROOT, toMcpApiError)
 }
 
-async function getManagementKeyOptionByIndex(keyOptions: ManagementKeyOption[], signerIndex: number): Promise<ManagementKeyOption> {
-  return getManagementKeyOptionByIndexBase(
+async function resolveManagementSigningKeyOption(keyOptions: ManagementKeyOption[]): Promise<ManagementKeyOption> {
+  return resolvePreferredManagementKeyOptionBase(
     keyOptions,
-    signerIndex,
-    { keyRoot: KEY_ROOT, toMcpApiError },
+    { keyRoot: KEY_ROOT, toMcpApiError, mgtGET },
   ) as Promise<ManagementKeyOption>
+}
+
+async function ensureLocalKeyPairForPublicKey(publicKey: string): Promise<{ fileName: string; publicKeyPath: string; privateKeyPath: string }> {
+  return ensureLocalKeyPairForPublicKeyBase(publicKey, { keyRoot: KEY_ROOT, toMcpApiError })
+}
+
+async function getPreferredSignerPublicKeyHex(): Promise<string | undefined> {
+  return getPreferredSignerPublicKeyHexBase({ mgtGET, toMcpApiError })
 }
 
 function buildManagementSigningMessage(bodyWithEmptySig: Record<string, unknown>): string {
@@ -197,203 +157,10 @@ async function fetchManagementKeyOptions(): Promise<ManagementKeyOption[]> {
     }))
 }
 
+async function getNodeKey(): Promise<import("./types.js").NodeId> {
+  return mgtGET<import("./types.js").NodeId>("/getNodeKey")
+}
 
-// ISSUE: This will be revisited when pre-signing is incorporated fully
-// // 0.15 /getPreSigningVerificationStatus
-// server.registerTool(
-//   "get_presigning_verification_status",
-//   {
-//     description: "Get pre-signing verification status and mode",
-//     outputSchema: z.object({
-//       enabled: z.boolean(),
-//       relayerAPIURL: z.string(),
-//       verificationMode: z.string(),
-//     }),
-//   },
-//   async (): Promise<CallToolResult> => {
-//     const output = await mgtGET<{
-//       enabled: boolean
-//       relayerAPIURL: string
-//       verificationMode: string
-//     }>("/getPreSigningVerificationStatus")
-//     return {
-//       content: [{ type: "text", text: JSON.stringify(output) }],
-//       structuredContent: output,
-//     }
-//   },
-// )
-
-// WARN: this should always be false in production !!
-// // 0.16 /getClientSigStatus
-// server.registerTool(
-//   "get_client_sig_status",
-//   {
-//     description: "Get whether client signature verification is ignored",
-//     outputSchema: z.object({ ignoreClientSigCheck: z.boolean() }),
-//   },
-//   async (): Promise<CallToolResult> => {
-//     const output = await mgtGET<{ ignoreClientSigCheck: boolean }>("/getClientSigStatus")
-//     return {
-//       content: [{ type: "text", text: JSON.stringify(output) }],
-//       structuredContent: output,
-//     }
-//   },
-// )
-
-
-// // 0.18 /getMSQTTKey
-// server.registerTool(
-//   "get_mqtt_key",
-//   {
-//     description: "Get MQTT broker CA certificate PEM and resolved path",
-//     outputSchema: MqttKeySchema,
-//   },
-//   async (): Promise<CallToolResult> => {
-//     const output = await mgtGET<MqttKey>("/getMSQTTKey")
-//     return {
-//       content: [{ type: "text", text: JSON.stringify(output) }],
-//       structuredContent: output,
-//     }
-//   },
-// )
-
-// // 0.19 /postMSQTTKey
-// server.registerTool(
-//   "post_mqtt_key",
-//   {
-//     description: "Write MQTT broker CA certificate PEM using management-key signature",
-//     inputSchema: z.object({
-//       nonce: NonceSchema,
-//       caCertPem: z.string(),
-//       signedMessage: z.string(),
-//       clientSig: ManagementSigSchema,
-//     }),
-//     outputSchema: z.object({
-//       path: z.string(),
-//       message: z.string(),
-//     }),
-//   },
-//   async ({
-//     nonce,
-//     caCertPem,
-//     signedMessage,
-//     clientSig,
-//   }: {
-//     nonce: Nonce
-//     caCertPem: string
-//     signedMessage: string
-//     clientSig: Sig
-//   }): Promise<CallToolResult> => {
-//     const body = { nonce, caCertPem, signedMessage, clientSig }
-//     const output = await mgtPOST<{ path: string; message: string }>("/postMSQTTKey", body)
-//     return {
-//       content: [{ type: "text", text: JSON.stringify(output) }],
-//       structuredContent: output,
-//     }
-//   },
-// )
-
-// // 0.20 /configUpdatePlan
-// server.registerTool(
-//   "config_update_plan",
-//   {
-//     description: "Plan staged configs.yaml update and return planned YAML plus verification digest",
-//     inputSchema: z.object({
-//       nonce: NonceSchema,
-//       sig: ManagementSigSchema,
-//       nodeMgtKey: ECDSAAddressSchema.optional(),
-//       publicMgtKey: z.union([
-//         EdDSAPubKeySchema,
-//         z.string().regex(/^ssh-ed25519\s+\S+.*$/, "ssh-ed25519 public key line expected"),
-//       ]).optional(),
-//       MSQTTRelayIP: z.string().optional(),
-//       nodeAddresses: z.array(z.string()).optional(),
-//       managementHttpPort: z.number().int().positive().optional(),
-//     }),
-//     outputSchema: ConfigUpdatePlanResponseSchema,
-//   },
-//   async ({
-//     nonce,
-//     sig,
-//     nodeMgtKey,
-//     publicMgtKey,
-//     MSQTTRelayIP,
-//     nodeAddresses,
-//     managementHttpPort,
-//   }: {
-//     nonce: Nonce
-//     sig: Sig
-//     nodeMgtKey?: ECDSAAddress
-//     publicMgtKey?: string
-//     MSQTTRelayIP?: string
-//     nodeAddresses?: string[]
-//     managementHttpPort?: number
-//   }): Promise<CallToolResult> => {
-//     const body = {
-//       nonce,
-//       sig,
-//       nodeMgtKey,
-//       publicMgtKey,
-//       MSQTTRelayIP,
-//       nodeAddresses,
-//       managementHttpPort,
-//     }
-//     const output = await mgtPOST<ConfigUpdatePlanResponse>("/configUpdatePlan", body)
-//     return {
-//       content: [{ type: "text", text: JSON.stringify(output) }],
-//       structuredContent: output,
-//     }
-//   },
-// )
-// 
-// // 0.21 /configUpdateImplement
-// server.registerTool(
-//   "config_update_implement",
-//   {
-//     description: "Apply a planned configs.yaml update using plannedShaMessage-bound signatures",
-//     inputSchema: z.object({
-//       plannedYaml: z.string(),
-//       nonce: NonceSchema,
-//       clientSig: ManagementSigSchema,
-//       signedMessage: z.string(),
-//       rotationNodeMgtKeyClientSig: ECDSASigSchema.optional(),
-//       rotationPublicMgtKeyClientSig: EdDSASigSchema.optional(),
-//     }),
-//     outputSchema: ConfigUpdateImplementResponseSchema,
-//   },
-//   async ({
-//     plannedYaml,
-//     nonce,
-//     clientSig,
-//     signedMessage,
-//     rotationNodeMgtKeyClientSig,
-//     rotationPublicMgtKeyClientSig,
-//   }: {
-//     plannedYaml: string
-//     nonce: Nonce
-//     clientSig: Sig
-//     signedMessage: string
-//     rotationNodeMgtKeyClientSig?: ECDSASig
-//     rotationPublicMgtKeyClientSig?: EdDSASig
-//   }): Promise<CallToolResult> => {
-//     const body = {
-//       plannedYaml,
-//       nonce,
-//       clientSig,
-//       signedMessage,
-//       rotationNodeMgtKeyClientSig,
-//       rotationPublicMgtKeyClientSig,
-//     }
-//     const output = await mgtPOST<ConfigUpdateImplementResponse>("/configUpdateImplement", body)
-//     return {
-//       content: [{ type: "text", text: JSON.stringify(output) }],
-//       structuredContent: output,
-//     }
-//   },
-// )
-// 
-
-// Category 1: Group Management
 registerNodeTools({
   server,
   mgtGET,
@@ -407,11 +174,14 @@ registerKeyTools({
   assertAgentCanSignManagementRequests,
   normalizeEd25519PublicKeyToHex,
   fetchManagementKeyOptions,
-  getManagementKeyOptionByIndex,
+  resolveManagementSigningKeyOption,
+  getNodeKey,
   buildManagementSigningMessage,
   signManagementMessage,
   listLocalManagementPublicKeys,
   getPrivateKeyStatus,
+  ensureLocalKeyPairForPublicKey,
+  getPreferredSignerPublicKeyHex,
 })
 registerGroupTools({
   server,
@@ -419,14 +189,7 @@ registerGroupTools({
   mgtPOST,
   toMcpApiError,
   fetchManagementKeyOptions,
-  getManagementKeyOptionByIndex,
-  buildManagementSigningMessage,
-  signManagementMessage,
-})
-registerSigningTools({
-  server,
-  fetchManagementKeyOptions,
-  getManagementKeyOptionByIndex,
+  resolveManagementSigningKeyOption,
   buildManagementSigningMessage,
   signManagementMessage,
 })
@@ -436,200 +199,10 @@ registerKeyGenTools({
   mgtPOST,
   toMcpApiError,
   fetchManagementKeyOptions,
-  getManagementKeyOptionByIndex,
+  resolveManagementSigningKeyOption,
   buildManagementSigningMessage,
   signManagementMessage,
 })
-
-// 1.1 /newGroupRequest
-
-// // 1.2 /newGroupRequestAgree
-// 
-// server.registerTool(
-//   "accept_group_request",
-//   {
-//     description: "Accept an incoming Group request",
-//     inputSchema: z.object({
-//       requestId: GroupRequestIdSchema,
-//       nonce: NonceSchema,
-//       sig: ManagementSigSchema
-//     }),
-//     outputSchema: z.object({ message: z.string() })
-//   },
-//   async ({ requestId, nonce, sig }: { requestId: GroupRequestId, nonce: Nonce, sig: Sig }): Promise<CallToolResult> => {
-//     const body = { requestId, nonce, sig }
-//     const output = await mgtPOST<string>("newGroupRequestAgree", body)
-//     return {
-//       content: [{ type: "text", text: JSON.stringify({ message: output }) }],
-//       structuredContent: { message: output }
-//     }
-//   }
-// )
-// 
-// // 1.3 /getAllGroupIds
-// 
-// server.registerTool(
-//   "list_all_groups",
-//   {
-//     description: "List all formed Groups that the MPC node client is a part of",
-//     outputSchema: z.object({
-//       groupResults: z.array(GroupResultSchema)
-//     })
-//   },
-//   async (): Promise<CallToolResult> => {
-//     const output = await mgtGET<GroupResult[]>("/getAllGroupIds")
-//     return {
-//       content: [{ type: "text", text: JSON.stringify({ groupResults: output }) }]
-//     }
-//   }
-// )
-// 
-// // 1.3 /listNewGroupRequests
-// 
-// server.registerTool(
-//   "list_group_requests",
-//   {
-//     description: "List incoming Group requests",
-//     inputSchema: z.object({
-//       filter: FilterSchema.optional(),
-//       pagenum: z.number().optional(),
-//       pagesize: z.number().optional()
-//     }),
-//     outputSchema: z.object({ requests: z.array(GroupRequestSchema) })
-//   },
-//   async ({ filter, pagenum, pagesize }: { filter?: Filter, pagenum?: number, pagesize?: number }): Promise<CallToolResult> => {
-//     let params = new URLSearchParams()
-//     if (filter !== undefined) {
-//       params.append("filter", filter)
-//     }
-//     if (pagenum !== undefined) {
-//       params.append("pagenum", pagenum.toString())
-//     }
-//     if (pagesize !== undefined) {
-//       params.append("pagesize", pagesize.toString())
-//     }
-// 
-//     const output = await mgtGET<GroupRequest[]>("/listNewGroupRequests", params)
-//     return {
-//       content: [{ type: "text", text: JSON.stringify({ requests: output }) }],
-//       structuredContent: { requests: output }
-//     }
-//   }
-// )
-// 
-// // 1.4 /getNewGroupRequestById
-// 
-// server.registerTool(
-//   "get_group_request_by_id",
-//   {
-//     description: "Gets a specific group request by its request ID",
-//     inputSchema: z.object({
-//       id: GroupRequestIdSchema
-//     }),
-//     outputSchema: GroupRequestSchema
-//   },
-//   async ({ id }: { id: GroupRequestId }): Promise<CallToolResult> => {
-//     let params = new URLSearchParams()
-//     params.append("id", id)
-// 
-//     const output = await mgtGET<GroupRequest>("/getNewGroupRequestById", params)
-//     return {
-//       content: [{ type: "text", text: JSON.stringify(output) }],
-//       structuredContent: output
-//     }
-//   }
-// )
-// 
-// // 1.5 /listNewGroupResults
-// 
-// server.registerTool(
-//   "list_group_results",
-//   {
-//     description: "List Group results",
-//     inputSchema: z.object({
-//       filter: FilterSchema.optional(),
-//       pagenum: z.number().optional(),
-//       pagesize: z.number().optional()
-//     }),
-//     outputSchema: z.object({ results: z.array(GroupResultSchema) })
-//   },
-//   async ({ filter, pagenum, pagesize }: { filter?: Filter, pagenum?: number, pagesize?: number }): Promise<CallToolResult> => {
-//     let params = new URLSearchParams()
-//     if (filter !== undefined) {
-//       params.append("filter", filter)
-//     }
-//     if (pagenum !== undefined) {
-//       params.append("pagenum", pagenum.toString())
-//     }
-//     if (pagesize !== undefined) {
-//       params.append("pagesize", pagesize.toString())
-//     }
-// 
-//     const output = await mgtGET<GroupResult[]>("/listNewGroupResults", params)
-//     return {
-//       content: [{ type: "text", text: JSON.stringify({ results: output }) }],
-//       structuredContent: { results: output }
-//     }
-//   }
-// )
-// 
-// // 1.6 /getNewGroupResultById
-// 
-// server.registerTool(
-//   "get_group_result_by_id",
-//   {
-//     description: "Gets a specific Group result by its request ID or by its group ID (if it is already created)",
-//     inputSchema: z.object({
-//       id: GroupRequestIdSchema.optional(),
-//       group_id: GroupIdSchema.optional()
-//     }),
-//     outputSchema: GroupResultSchema
-//   },
-//   async ({ id, group_id }: { id?: GroupRequestId, group_id?: GroupId }): Promise<CallToolResult> => {
-//     let params = new URLSearchParams()
-//     if (id !== undefined) {
-//       params.append("id", id)
-//     } else if (group_id !== undefined) {
-//       params.append("group_id", group_id)
-//     }
-// 
-//     const output = await mgtGET<GroupResult>("/getNewGroupResultById", params)
-//     return {
-//       content: [{ type: "text", text: JSON.stringify(output) }],
-//       structuredContent: output
-//     }
-//   }
-// )
-// 
-// server.registerTool(
-//   "sign_ecdsa",
-//   {
-//     description: "Use the configured ECDSA keypair (aka NodeMgtKey) to sign arbitrary message data",
-//     inputSchema: {
-//       msg: z.string().describe("The exact body of the input that is intended to be called on a management API route")
-//     },
-//     outputSchema: {
-//       sig: ECDSASigSchema
-//     }
-//   },
-//   async ({ msg }): Promise<CallToolResult> => {
-//     const { nodeMgtKey, nonce } = await mgtGET<{ nodeMgtKey: ECDSAAddress, nonce: Nonce }>("/getNodeMgtKeyNonce")
-//     const messageRaw = await mgtGET<MessageToSignResponse>("/getMessageToSign", {...JSON.parse(msg)})
-//     const signature = await ethers.signTransaction(messageRaw, nodeMgtKey);
-//     return {
-//       content: [{ type: "text", text: JSON.stringify({sig, description: `ECDSA signature for ${msg}`}) }],
-//       structuredContent: sig
-//     }
-//   }
-// )
-
-// Category 2: KeyGens
-
-// Category 3: Signing
-
-// Category 4: Execution
-
-// Category 5: Configuration
 
 async function main() {
   // Let clients refresh tools list immediately after initialization.

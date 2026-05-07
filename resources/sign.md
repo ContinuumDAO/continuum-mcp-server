@@ -1,6 +1,6 @@
 # Signing Model
 
-This server uses a reusable EdDSA management signing flow across signed routes.
+This server uses an in-route EdDSA management signing flow across signed routes.
 
 ## Why this matters
 
@@ -11,34 +11,35 @@ Most management API writes require:
 - canonical message body
 - signature over that exact message
 
-The tools below standardize this process for clients.
+Each route tool performs its own signing internally so clients only call one tool per action.
 
 ## Primary signing tools
 
 - `list_management_keys`
-  - Returns authorized EdDSA keys, nonce, local signer mapping, and private-key availability status.
-- `build_signed_request_plan`
-  - Route-agnostic helper that builds `unsignedBody` and `messageToSign` for a signer index.
-- `sign_management_message`
-  - Route-agnostic helper that returns EdDSA signature for a message.
+  - Returns authorized EdDSA keys, nonce, local file match, private-key availability, and current preferred signer.
+- `set_preferred_management_key`
+  - Sets the default signer via `/setPreferredSigner` after strict local keypair validation.
+- `get_preferred_management_key`
+  - Reads current preferred signer from `/getPreferredSigner`.
 
 ## Canonical flow
 
-1. Choose signer index
-   - Call `list_management_keys`.
-2. Build canonical payload
-   - Call `build_signed_request_plan` with `action`, `signerIndex`, and route payload.
-3. Sign canonical message
-   - Call `sign_management_message` with same `signerIndex` and `messageToSign`.
-4. Submit route call
-   - Use returned signature in target route body (`sig = signature`).
+1. (Optional) set preferred signer
+   - Call `set_preferred_management_key` with `publicKeyHex`.
+2. Call the target route tool directly
+   - Example: `create_group_request`, `accept_group_request`, `create_mpc_keygen_request`, `add_eddsa_management_key`.
+3. Route tool handles signing internally
+   - Resolve signer, build canonical payload, sign, and submit.
 
-## Signer index convention
+## Signer selection behavior
 
-- `0` = bootstrap signer (non-`added_key_N` local key)
-- `N >= 1` = `added_key_N`
-
-This lets clients avoid direct file/path details.
+- If preferred signer is set:
+  - it must be in allowed management keys, and
+  - it must have a matching usable local keypair in `KEY_ROOT/management_keys`.
+- If preferred signer is not set:
+  - server iterates allowed keys and picks first key with usable local private key.
+- If no usable local key exists for any allowed key:
+  - signed operations fail with explicit error.
 
 ## Key format handling
 
@@ -55,19 +56,24 @@ Public key normalization to 32-byte hex is applied where required by API calls.
 - Group creation: `create_group_request`
 - Group agree: `accept_group_request`
 - Key add: `add_eddsa_management_key`
-- Keygen request/agree tools
+- Keygen request/agree: `create_mpc_keygen_request`, `accept_mpc_keygen_request`
 
-All use the same signer-index + nonce + canonical message pattern.
+All use the same preferred-signer + canonical message pattern with base fields:
+
+- `nodeKey`
+- `Nonce`
+- `Sig: ""` (before signing)
 
 ## Common failure causes
 
-- signer index does not map to local key file
-- key exists on node but private key is missing locally
+- preferred signer does not exist locally
+- preferred signer has no matching private key
+- preferred signer private key exists but is unreadable/unparseable
+- no preferred signer and no allowed key has usable local private key
 - signature built from non-canonical message body
 - stale nonce due to manually edited body
 
 ## Client guidance
 
-- Never mutate `messageToSign` before signing.
-- Keep signing and submit steps tightly coupled.
+- Call one route tool per operation; avoid manual multi-tool signing orchestration.
 - If signing fails, refresh `list_management_keys` before retry.

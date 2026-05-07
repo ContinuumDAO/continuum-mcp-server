@@ -6,8 +6,10 @@ import { generateKeyPairSync } from "crypto"
 import { z } from "zod"
 import {
   EdDSAPubKeySchema,
+  NodeIdSchema,
   NonceSchema,
   type EdDSAPubKey,
+  type NodeId,
   type Nonce,
   type Sig,
 } from "./types.js"
@@ -39,11 +41,14 @@ type KeyToolsDeps = {
   assertAgentCanSignManagementRequests: () => Promise<void>
   normalizeEd25519PublicKeyToHex: (value: string) => string
   fetchManagementKeyOptions: () => Promise<ManagementKeyOption[]>
-  getManagementKeyOptionByIndex: (keyOptions: ManagementKeyOption[], signerIndex: number) => Promise<ManagementKeyOption>
+  resolveManagementSigningKeyOption: (keyOptions: ManagementKeyOption[]) => Promise<ManagementKeyOption>
+  getNodeKey: () => Promise<NodeId>
   buildManagementSigningMessage: (bodyWithEmptySig: Record<string, unknown>) => string
   signManagementMessage: (option: ManagementKeyOption, message: string) => Promise<Sig>
   listLocalManagementPublicKeys: () => Promise<LocalManagementKeyEntry[]>
   getPrivateKeyStatus: (option: ManagementKeyOption) => Promise<{ available: boolean; reason?: string }>
+  ensureLocalKeyPairForPublicKey: (publicKey: string) => Promise<{ fileName: string; publicKeyPath: string; privateKeyPath: string }>
+  getPreferredSignerPublicKeyHex: () => Promise<string | undefined>
 }
 
 export function registerKeyTools(deps: KeyToolsDeps): void {
@@ -56,11 +61,14 @@ export function registerKeyTools(deps: KeyToolsDeps): void {
     assertAgentCanSignManagementRequests,
     normalizeEd25519PublicKeyToHex,
     fetchManagementKeyOptions,
-    getManagementKeyOptionByIndex,
+    resolveManagementSigningKeyOption,
+    getNodeKey,
     buildManagementSigningMessage,
     signManagementMessage,
     listLocalManagementPublicKeys,
     getPrivateKeyStatus,
+    ensureLocalKeyPairForPublicKey,
+    getPreferredSignerPublicKeyHex,
   } = deps
 
   // 0.6 /hasPublicMgtKey
@@ -84,9 +92,9 @@ export function registerKeyTools(deps: KeyToolsDeps): void {
     {
       description: "List configured EdDSA signing keys and their signer index mapping (0=bootstrap, N=added_key_N).",
       outputSchema: z.object({
+        preferredSigner: z.string().optional(),
         keys: z.array(
           z.object({
-            signerIndex: z.number().int().nonnegative().optional(),
             localFileName: z.string().optional(),
             kind: z.literal("EdDSA"),
             value: z.string(),
@@ -100,6 +108,7 @@ export function registerKeyTools(deps: KeyToolsDeps): void {
     },
     async (): Promise<CallToolResult> => {
       const keyOptions = await fetchManagementKeyOptions()
+      const preferredSigner = await getPreferredSignerPublicKeyHex()
       const localKeys = await listLocalManagementPublicKeys()
       const localFileByPub = new Map(
         localKeys.filter((k) => k.publicKeyHex).map((k) => [k.publicKeyHex as EdDSAPubKey, k.fileName] as const),
@@ -109,14 +118,8 @@ export function registerKeyTools(deps: KeyToolsDeps): void {
           const privateKeyStatus = await getPrivateKeyStatus(key)
           const normalizedPublic = normalizeEd25519PublicKeyToHex(key.value) as EdDSAPubKey
           const localFileName = localFileByPub.get(normalizedPublic)
-          let signerIndex: number | undefined
-          if (localFileName) {
-            const addedMatch = localFileName.match(/^added_key_(\d+)$/i)
-            signerIndex = addedMatch ? Number(addedMatch[1]) : 0
-          }
           return {
             ...key,
-            signerIndex,
             localFileName,
             localPrivateKeyAvailable: privateKeyStatus.available,
             localPrivateKeyError: privateKeyStatus.reason,
@@ -128,11 +131,11 @@ export function registerKeyTools(deps: KeyToolsDeps): void {
           type: "text",
           text: keys
             .map((k, i) =>
-              `${i + 1}. signerIndex=${k.signerIndex ?? "?"} file=${k.localFileName ?? "?"} [${k.kind}] ${k.value} nonce=${k.nonce}${k.label ? ` (${k.label})` : ""} localPrivateKey=${k.localPrivateKeyAvailable ? "ok" : "missing/unusable"}`,
+              `${i + 1}. file=${k.localFileName ?? "?"} [${k.kind}] ${k.value} nonce=${k.nonce}${k.label ? ` (${k.label})` : ""} localPrivateKey=${k.localPrivateKeyAvailable ? "ok" : "missing/unusable"}${preferredSigner && normalizeEd25519PublicKeyToHex(k.value) === preferredSigner ? " [PREFERRED]" : ""}`,
             )
             .join("\n"),
         }],
-        structuredContent: { keys },
+        structuredContent: { preferredSigner, keys },
       }
     },
   )
@@ -198,48 +201,131 @@ export function registerKeyTools(deps: KeyToolsDeps): void {
   server.registerTool(
     "add_eddsa_management_key",
     {
-      description: "Add a new Ed25519 public key to allowed management keys via /addManagementKey, signed by signer index (0=bootstrap, N=added_key_N).",
+      description: "Add a new Ed25519 public key to allowed management keys via /addManagementKey, signed by preferred signer (or first locally-usable allowed signer).",
       inputSchema: z.object({
-        signerIndex: z.number().int().nonnegative(),
-        newPublicKey: EdDSAPubKeySchema,
+        newPublicKey: z.string(),
       }),
       outputSchema: z.object({
         success: z.boolean(),
         publicKey: EdDSAPubKeySchema,
+        nodeKey: NodeIdSchema,
         message: z.string(),
       }),
     },
     async ({
-      signerIndex,
       newPublicKey,
     }: {
-      signerIndex: number
-      newPublicKey: EdDSAPubKey
+      newPublicKey: string
     }): Promise<CallToolResult> => {
       await assertAgentCanSignManagementRequests()
 
       const normalizedNewPublicKey = normalizeEd25519PublicKeyToHex(newPublicKey) as EdDSAPubKey
+      const nodeKey = await getNodeKey()
       const keyOptions = await fetchManagementKeyOptions()
-      const selectedSigningKey = await getManagementKeyOptionByIndex(keyOptions, signerIndex)
+      const selectedSigningKey = await resolveManagementSigningKeyOption(keyOptions)
       if (normalizeEd25519PublicKeyToHex(selectedSigningKey.value) === normalizedNewPublicKey) {
         throw toMcpApiError(
           "Signer key cannot be the newly created key being added. Use an existing already-authorized EdDSA signer key.",
-          { signerIndex, signerPublicKey: selectedSigningKey.value, newPublicKey: normalizedNewPublicKey },
+          { signerPublicKey: selectedSigningKey.value, newPublicKey: normalizedNewPublicKey },
         )
       }
 
-      const unsignedBody = { newPublicKey: normalizedNewPublicKey, nonce: selectedSigningKey.nonce, sig: "" }
+      const unsignedBody = { newPublicKey: normalizedNewPublicKey, nodeKey, Nonce: selectedSigningKey.nonce, Sig: "" }
       const signingMessage = buildManagementSigningMessage(unsignedBody)
       const signature = await signManagementMessage(selectedSigningKey, signingMessage)
-      const body = { ...unsignedBody, sig: signature }
+      const body = { ...unsignedBody, Sig: signature }
       await mgtPOST<null>("/addManagementKey", body)
 
       const structuredContent = {
         success: true,
         publicKey: normalizedNewPublicKey,
+        nodeKey,
         message: "Added Ed25519 management key successfully.",
       }
 
+      return {
+        content: [{ type: "text", text: JSON.stringify(structuredContent) }],
+        structuredContent,
+      }
+    },
+  )
+
+  server.registerTool(
+    "set_preferred_management_key",
+    {
+      description: "Set the preferred Ed25519 management signer. Input only the target publicKeyHex. This tool signs in-route: if a preferred signer is already set and usable, it is used; otherwise the server automatically falls back to the first allowed management key that has a usable local private key. It then verifies the requested preferred key exists locally with matching private key before calling /setPreferredSigner.",
+      inputSchema: z.object({
+        publicKeyHex: z.string(),
+      }),
+      outputSchema: z.object({
+        success: z.boolean(),
+        publicKeyHex: EdDSAPubKeySchema,
+        signerPublicKey: EdDSAPubKeySchema,
+        nodeKey: NodeIdSchema,
+        Nonce: NonceSchema,
+        signedMessage: z.string(),
+        clientSig: z.string(),
+        fileName: z.string(),
+        message: z.string(),
+      }),
+    },
+    async ({ publicKeyHex }: { publicKeyHex: string }): Promise<CallToolResult> => {
+      const normalized = normalizeEd25519PublicKeyToHex(publicKeyHex) as EdDSAPubKey
+      const keyOptions = await fetchManagementKeyOptions()
+      const allowed = keyOptions.some((k) => normalizeEd25519PublicKeyToHex(k.value) === normalized)
+      if (!allowed) {
+        throw toMcpApiError("Preferred signer must already be in allowed management keys", { publicKeyHex: normalized })
+      }
+      const localMatch = await ensureLocalKeyPairForPublicKey(normalized)
+      const selectedSigningKey = await resolveManagementSigningKeyOption(keyOptions)
+      const nodeKey = await getNodeKey()
+      const unsignedBody = {
+        nodeKey,
+        Nonce: selectedSigningKey.nonce,
+        publicKey: normalized,
+        Sig: "",
+      }
+      const signedMessage = buildManagementSigningMessage(unsignedBody)
+      const clientSig = await signManagementMessage(selectedSigningKey, signedMessage)
+      // /setPreferredSigner validates SetPreferredSignerPost: requires signedMessage + clientSig (not Sig).
+      // Field names for nodeKey/Nonce/publicKey should match the canonical JSON inside signedMessage.
+      const body = {
+        nodeKey,
+        Nonce: selectedSigningKey.nonce,
+        publicKey: normalized,
+        signedMessage,
+        clientSig,
+      }
+      const apiMessage = await mgtPOST<string>("/setPreferredSigner", body)
+      const structuredContent = {
+        success: true,
+        publicKeyHex: normalized,
+        signerPublicKey: normalizeEd25519PublicKeyToHex(selectedSigningKey.value) as EdDSAPubKey,
+        nodeKey,
+        Nonce: selectedSigningKey.nonce,
+        signedMessage,
+        clientSig,
+        fileName: localMatch.fileName,
+        message: apiMessage || "Preferred signer stored",
+      }
+      return {
+        content: [{ type: "text", text: JSON.stringify(structuredContent) }],
+        structuredContent,
+      }
+    },
+  )
+
+  server.registerTool(
+    "get_preferred_management_key",
+    {
+      description: "Get the configured preferred signer to use for management signing operations.",
+      outputSchema: z.object({
+        publicKeyHex: EdDSAPubKeySchema.optional(),
+      }),
+    },
+    async (): Promise<CallToolResult> => {
+      const preferred = await getPreferredSignerPublicKeyHex()
+      const structuredContent = { publicKeyHex: preferred as EdDSAPubKey | undefined }
       return {
         content: [{ type: "text", text: JSON.stringify(structuredContent) }],
         structuredContent,

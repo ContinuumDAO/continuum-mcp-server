@@ -9,12 +9,10 @@ async function main() {
       throw new Error("No management keys returned by list_management_keys")
     }
 
-    const signerIndex = Number.isInteger(keys[0].signerIndex) ? keys[0].signerIndex : 0
     const planRes = await client.callTool({
       name: "build_signed_request_plan",
       arguments: {
         action: "newGroupRequest",
-        signerIndex,
         payload: {
           keyList: [],
           BrokerArray: [],

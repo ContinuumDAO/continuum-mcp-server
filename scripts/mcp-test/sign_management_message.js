@@ -9,11 +9,10 @@ async function main() {
       throw new Error("No management keys returned by list_management_keys")
     }
 
-    const signerIndex = Number.isInteger(keys[0].signerIndex) ? keys[0].signerIndex : 0
     const message = JSON.stringify({ nonce: keys[0].nonce, sig: "", ping: "test-message" })
     const signRes = await client.callTool({
       name: "sign_management_message",
-      arguments: { signerIndex, message },
+      arguments: { message },
     })
     console.log(JSON.stringify(signRes, null, 2))
   } finally {
