@@ -13,7 +13,9 @@
     "test:tool:create-group-request": "node scripts/mcp-test/create_group_request.js",
     "test:resources": "node scripts/mcp-test/resources.js",
     "keys:list-local": "node scripts/list-local-management-keys.js",
-    "sign-json-with-key": "node scripts/sign-json-with-key.js"
+    "sign-json-with-key": "node scripts/sign-json-with-key.js",
+    "test:tool:list-group-requests": "node scripts/mcp-test/list_group_requests.js",
+    "test:tool:get-group-request-by-id": "node scripts/mcp-test/get_group_request_by_id.js"
   },
   "files": [
     "build"

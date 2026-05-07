@@ -2,10 +2,17 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import {
+  FilterSchema,
+  GroupIdSchema,
+  GroupRequestSchema,
+  GroupResultSchema,
   GroupRequestIdSchema,
   ManagementSigSchema,
   NodeIdSchema,
   NonceSchema,
+  type Filter,
+  type GroupId,
+  type GroupRequest,
   type GroupRequestId,
   type GroupResult,
   type NodeId,
@@ -92,6 +99,55 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
           nodes,
           nodeIdByIp,
         },
+      }
+    },
+  )
+
+  server.registerTool(
+    "accept_group_request",
+    {
+      description: "Agree to a pending incoming group request by request ID using signer index (0=bootstrap, N=added_key_N).",
+      inputSchema: z.object({
+        requestId: GroupRequestIdSchema,
+        signerIndex: z.number().int().nonnegative(),
+      }),
+      outputSchema: z.object({
+        message: z.string(),
+        selectedSigningKey: z.object({
+          id: z.string(),
+          kind: z.literal("EdDSA"),
+          value: z.string(),
+          nonce: NonceSchema,
+          label: z.string().optional(),
+        }),
+        signingMessage: z.string(),
+      }),
+    },
+    async ({ requestId, signerIndex }: { requestId: GroupRequestId; signerIndex: number }): Promise<CallToolResult> => {
+      const requestRaw = await mgtGET<unknown>("/getNewGroupRequestById", new URLSearchParams({ id: requestId }))
+      const request = normalizeGroupRequest(requestRaw, "accept_group_request.request", toMcpApiError)
+      if (request.status !== "pending") {
+        throw toMcpApiError("Group request is not pending; only pending requests can be agreed", {
+          requestId,
+          status: request.status,
+        })
+      }
+
+      const keyOptions = await fetchManagementKeyOptions()
+      const selectedSigningKey = await getManagementKeyOptionByIndex(keyOptions, signerIndex)
+      const unsignedBody = {
+        requestId,
+        nonce: selectedSigningKey.nonce,
+        sig: "",
+      }
+      const signingMessage = buildManagementSigningMessage(unsignedBody)
+      const signature = await signManagementMessage(selectedSigningKey, signingMessage)
+      const body = { ...unsignedBody, sig: signature }
+      const output = await mgtPOST<string>("/newGroupRequestAgree", body)
+
+      return {
+        content: [{ type: "text", text: JSON.stringify({ message: output, selectedSigningKey, signingMessage }) }],
+        structuredContent: { message: output, selectedSigningKey, signingMessage },
       }
     },
   )
@@ -213,6 +269,120 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
       }
     },
   )
+
+  server.registerTool(
+    "list_group_requests",
+    {
+      description: "List incoming group creation requests.",
+      inputSchema: z.object({
+        filter: FilterSchema.optional(),
+        pagenum: z.number().int().nonnegative().optional(),
+        pagesize: z.number().int().positive().optional(),
+      }),
+      outputSchema: z.object({ requests: z.array(GroupRequestSchema) }),
+    },
+    async ({ filter, pagenum, pagesize }: { filter?: Filter; pagenum?: number; pagesize?: number }): Promise<CallToolResult> => {
+      const params = new URLSearchParams()
+      if (filter !== undefined) {
+        params.append("filter", filter)
+      }
+      if (pagenum !== undefined) {
+        params.append("pagenum", pagenum.toString())
+      }
+      if (pagesize !== undefined) {
+        params.append("pagesize", pagesize.toString())
+      }
+
+      const rawRequests = await mgtGET<unknown[]>("/listNewGroupRequests", params)
+      const requests = rawRequests.map((item, idx) => normalizeGroupRequest(item, `list_group_requests[${idx}]`, toMcpApiError))
+      return {
+        content: [{ type: "text", text: JSON.stringify({ requests }) }],
+        structuredContent: { requests },
+      }
+    },
+  )
+
+  server.registerTool(
+    "list_group_results",
+    {
+      description: "List group creation results.",
+      inputSchema: z.object({
+        filter: FilterSchema.optional(),
+        pagenum: z.number().int().nonnegative().optional(),
+        pagesize: z.number().int().positive().optional(),
+      }),
+      outputSchema: z.object({ results: z.array(GroupResultSchema) }),
+    },
+    async ({ filter, pagenum, pagesize }: { filter?: Filter; pagenum?: number; pagesize?: number }): Promise<CallToolResult> => {
+      const params = new URLSearchParams()
+      if (filter !== undefined) {
+        params.append("filter", filter)
+      }
+      if (pagenum !== undefined) {
+        params.append("pagenum", pagenum.toString())
+      }
+      if (pagesize !== undefined) {
+        params.append("pagesize", pagesize.toString())
+      }
+
+      const results = await fetchGroupResultsList(mgtGET, params, toMcpApiError)
+      return {
+        content: [{ type: "text", text: JSON.stringify({ results }) }],
+        structuredContent: { results },
+      }
+    },
+  )
+
+  server.registerTool(
+    "get_group_request_by_id",
+    {
+      description: "Get a specific group request by request ID.",
+      inputSchema: z.object({
+        id: GroupRequestIdSchema,
+      }),
+      outputSchema: GroupRequestSchema,
+    },
+    async ({ id }: { id: GroupRequestId }): Promise<CallToolResult> => {
+      const params = new URLSearchParams()
+      params.append("id", id)
+      const rawOutput = await mgtGET<unknown>("/getNewGroupRequestById", params)
+      const output = normalizeGroupRequest(rawOutput, "get_group_request_by_id", toMcpApiError)
+      return {
+        content: [{ type: "text", text: JSON.stringify(output) }],
+        structuredContent: output,
+      }
+    },
+  )
+
+  server.registerTool(
+    "get_group_result_by_id",
+    {
+      description: "Get a specific group result by request ID or group ID.",
+      inputSchema: z.object({
+        id: GroupRequestIdSchema.optional(),
+        group_id: GroupIdSchema.optional(),
+      }),
+      outputSchema: GroupResultSchema,
+    },
+    async ({ id, group_id }: { id?: GroupRequestId; group_id?: GroupId }): Promise<CallToolResult> => {
+      if ((id === undefined && group_id === undefined) || (id !== undefined && group_id !== undefined)) {
+        throw toMcpApiError("Provide exactly one of id or group_id", { id, group_id })
+      }
+      const params = new URLSearchParams()
+      if (id !== undefined) {
+        params.append("id", id)
+      } else if (group_id !== undefined) {
+        params.append("group_id", group_id)
+      }
+
+      const raw = await mgtGET<unknown>("/getNewGroupResultById", params)
+      const output = normalizeGroupResult(raw, "get_group_result_by_id", toMcpApiError)
+      return {
+        content: [{ type: "text", text: JSON.stringify(output) }],
+        structuredContent: output,
+      }
+    },
+  )
 }
 
 function buildNewGroupUnsignedBody(keyList: NodeId[], brokerArray: string[], nonce: Nonce): {
@@ -282,4 +452,174 @@ async function fetchNodeIds(
   )
 
   return Object.fromEntries(entries)
+}
+
+async function fetchGroupResultsList(
+  mgtGET: <T>(path: string, params?: string | URLSearchParams | QueryParams, target?: RequestTarget) => Promise<T>,
+  params: URLSearchParams,
+  toMcpApiError: (message: string, data?: unknown) => Error,
+): Promise<GroupResult[]> {
+  // Newer API/doc route.
+  try {
+    const data = await mgtGET<unknown[]>("/listNewGroupResults", params)
+    if (Array.isArray(data)) {
+      return data.map((item, idx) => normalizeGroupResult(item, `list_group_results.new[${idx}]`, toMcpApiError))
+    }
+  } catch {
+    // Fall through to legacy/group-discovery route.
+  }
+
+  // Fallback route seen on some nodes: /listGroupResults -> { groups: [{ groupId, nodeKeys }] }
+  const fallback = await mgtGET<unknown>("/listGroupResults", params)
+  const groups = extractGroupsArray(fallback)
+  return groups.map((g, idx) => normalizeLegacyGroupListEntry(g, `list_group_results.legacy[${idx}]`, toMcpApiError))
+}
+
+function extractGroupsArray(payload: unknown): unknown[] {
+  if (!payload || typeof payload !== "object") {
+    return []
+  }
+  const obj = payload as Record<string, unknown>
+  if (Array.isArray(obj.groups)) {
+    return obj.groups
+  }
+  if (Array.isArray(obj.results)) {
+    return obj.results
+  }
+  return []
+}
+
+function normalizeLegacyGroupListEntry(
+  value: unknown,
+  context: string,
+  toMcpApiError: (message: string, data?: unknown) => Error,
+): GroupResult {
+  if (!value || typeof value !== "object") {
+    throw toMcpApiError("Legacy group result item is not an object", { context, value })
+  }
+  const src = value as Record<string, unknown>
+  const groupId = asString(pick(src, ["groupId", "GroupId"]), `${context}.groupId`, toMcpApiError)
+  const keyList = asStringArray(pick(src, ["nodeKeys", "KeyList", "keyList"]), `${context}.nodeKeys`, toMcpApiError)
+  return {
+    requestid: (`legacy_${groupId}` as unknown) as GroupRequestId,
+    GroupId: groupId as GroupId,
+    KeyList: keyList as NodeId[],
+    Addresses: [],
+    SigList: {},
+    BrokerArray: [],
+    timepoint: "",
+  }
+}
+
+function normalizeGroupResult(
+  value: unknown,
+  context: string,
+  toMcpApiError: (message: string, data?: unknown) => Error,
+): GroupResult {
+  if (!value || typeof value !== "object") {
+    throw toMcpApiError("Group result response item is not an object", { context, value })
+  }
+  const src = value as Record<string, unknown>
+  return {
+    requestid: asString(pick(src, ["requestid", "RequestId", "id"]), `${context}.requestid`, toMcpApiError) as GroupRequestId,
+    GroupId: asString(pick(src, ["GroupId", "groupId"]), `${context}.GroupId`, toMcpApiError) as GroupId,
+    KeyList: asStringArray(pick(src, ["KeyList", "keyList"]), `${context}.KeyList`, toMcpApiError) as NodeId[],
+    Addresses: asStringArrayOptional(pick(src, ["Addresses", "addresses"]), `${context}.Addresses`, toMcpApiError),
+    SigList: asRecordOptional(pick(src, ["SigList", "sigList"]), `${context}.SigList`, toMcpApiError) as Record<NodeId, Sig>,
+    BrokerArray: asStringArrayOptional(pick(src, ["BrokerArray", "brokerArray"]), `${context}.BrokerArray`, toMcpApiError),
+    timepoint: asString(pick(src, ["timepoint", "Timepoint"]), `${context}.timepoint`, toMcpApiError),
+    originator: asOptionalString(pick(src, ["originator", "Originator"])) as NodeId | undefined,
+  }
+}
+
+function normalizeGroupRequest(
+  value: unknown,
+  context: string,
+  toMcpApiError: (message: string, data?: unknown) => Error,
+): GroupRequest {
+  if (!value || typeof value !== "object") {
+    throw toMcpApiError("Group request response item is not an object", { context, value })
+  }
+  const src = value as Record<string, unknown>
+  const dataRaw = pick(src, ["NewGroupDataPb", "newGroupDataPb", "newgroupdatapb", "data", "newGroupData"])
+  const data = dataRaw && typeof dataRaw === "object"
+    ? (dataRaw as Record<string, unknown>)
+    : hasAny(src, ["GroupId", "groupId", "KeyList", "keyList", "SigList", "sigList"])
+      ? src
+      : undefined
+
+  if (!data) {
+    throw toMcpApiError("Group request missing NewGroupDataPb payload", { context, keys: Object.keys(src) })
+  }
+
+  const normalized: GroupRequest = {
+    RequestId: asString(pick(src, ["RequestId", "requestid", "id"]), `${context}.RequestId`, toMcpApiError) as GroupRequestId,
+    NewGroupDataPb: {
+      GroupId: asString(pick(data, ["GroupId", "groupId"]), `${context}.NewGroupDataPb.GroupId`, toMcpApiError),
+      KeyList: asStringArray(pick(data, ["KeyList", "keyList"]), `${context}.NewGroupDataPb.KeyList`, toMcpApiError),
+      Addresses: asStringArrayOptional(pick(data, ["Addresses", "addresses"]), `${context}.NewGroupDataPb.Addresses`, toMcpApiError),
+      SigList: asRecordOptional(pick(data, ["SigList", "sigList"]), `${context}.NewGroupDataPb.SigList`, toMcpApiError) as Record<NodeId, Sig>,
+      BrokerArray: asStringArrayOptional(pick(data, ["BrokerArray", "brokerArray"]), `${context}.NewGroupDataPb.BrokerArray`, toMcpApiError),
+    },
+    Timepoint: asString(pick(src, ["Timepoint", "timepoint"]), `${context}.Timepoint`, toMcpApiError),
+    status: asString(pick(src, ["status"]), `${context}.status`, toMcpApiError) as GroupRequest["status"],
+    originator: asString(pick(src, ["originator", "Originator"]), `${context}.originator`, toMcpApiError) as NodeId,
+  }
+
+  return normalized
+}
+
+function pick(obj: Record<string, unknown>, keys: string[]): unknown {
+  for (const k of keys) {
+    if (Object.prototype.hasOwnProperty.call(obj, k)) {
+      return obj[k]
+    }
+  }
+  return undefined
+}
+
+function hasAny(obj: Record<string, unknown>, keys: string[]): boolean {
+  return keys.some((k) => Object.prototype.hasOwnProperty.call(obj, k))
+}
+
+function asString(value: unknown, field: string, toMcpApiError: (message: string, data?: unknown) => Error): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw toMcpApiError("Expected non-empty string field in group request response", { field, value })
+  }
+  return value
+}
+
+function asStringArray(value: unknown, field: string, toMcpApiError: (message: string, data?: unknown) => Error): string[] {
+  if (!Array.isArray(value) || value.some((v) => typeof v !== "string")) {
+    throw toMcpApiError("Expected string[] field in group request response", { field, value })
+  }
+  return value
+}
+
+function asRecord(value: unknown, field: string, toMcpApiError: (message: string, data?: unknown) => Error): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw toMcpApiError("Expected object field in group request response", { field, value })
+  }
+  return value as Record<string, unknown>
+}
+
+function asStringArrayOptional(value: unknown, field: string, toMcpApiError: (message: string, data?: unknown) => Error): string[] {
+  if (value === undefined || value === null) {
+    return []
+  }
+  return asStringArray(value, field, toMcpApiError)
+}
+
+function asRecordOptional(value: unknown, field: string, toMcpApiError: (message: string, data?: unknown) => Error): Record<string, unknown> {
+  if (value === undefined || value === null) {
+    return {}
+  }
+  return asRecord(value, field, toMcpApiError)
+}
+
+function asOptionalString(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined
+  }
+  return typeof value === "string" ? value : undefined
 }

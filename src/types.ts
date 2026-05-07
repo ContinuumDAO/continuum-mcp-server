@@ -112,14 +112,14 @@ export const GroupRequestSchema = z.object({
 })
 
 export const GroupResultSchema = z.object({
-  requestid: GroupRequestIdSchema,
+  requestid: z.string(),
   GroupId: GroupIdSchema,
   KeyList: z.array(NodeIdSchema),
   Addresses: z.array(z.string()),
   SigList: z.record(NodeIdSchema, ManagementSigSchema),
   BrokerArray: z.array(z.string()),
   timepoint: z.string(),
-  originator: NodeIdSchema,
+  originator: NodeIdSchema.optional(),
 })
 
 export const GroupSchema = {
