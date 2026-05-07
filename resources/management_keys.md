@@ -1,45 +1,73 @@
-# Management Keys (EdDSA)
+# Management Keys
 
-This MCP server uses Ed25519 (EdDSA) keys for agent-side management signing.
+This server signs management actions with Ed25519 keys.
 
 ## Goal
 
-Create a new local Ed25519 keypair, then add its public key to the node's allowed management keys via `addManagementKey`.
+Maintain usable local signer keys and keep authorized public keys in sync with the node.
 
-## Required tools
+## Key tools
 
+- `has_eddsa_management_key`
+- `list_management_keys`
 - `create_eddsa_management_keypair`
-- `list_management_signing_keys`
 - `add_eddsa_management_key`
 
-## Step-by-step
+## Key lifecycle
 
-1. **Create local keypair**
-   - Call `create_eddsa_management_keypair`.
-   - The server auto-generates file name: `added_key_{N}`.
-   - Files are written to `KEY_ROOT/management_keys`:
-     - private: `added_key_{N}`
-     - public: `added_key_{N}.pub`
-   - Save returned `fileName` and `publicKey`.
+1. Check whether any EdDSA management key is configured
+   - `has_eddsa_management_key`
+2. Inspect current signer state
+   - `list_management_keys`
+3. Generate a new local keypair when needed
+   - `create_eddsa_management_keypair`
+4. Add new public key to node authorization set
+   - `add_eddsa_management_key`
 
-2. **Choose existing signer key**
-   - Call `list_management_signing_keys`.
-   - Pick one existing signer public key (`selectedSignerPublicKey`) from the response.
-   - This key must already be authorized on the node.
+## `list_management_keys` output use
 
-3. **Add new key to management API**
-   - Call `add_eddsa_management_key` with:
-     - `fileName` from step 1
-     - `existingAuthorizedSignerPublicKey` from step 2
-   - The tool:
-     - reads `KEY_ROOT/management_keys/{fileName}.pub`
-     - builds canonical signed body
-     - signs with selected signer private key
-     - posts `/addManagementKey`
+Each key entry includes:
 
-## Important checks
+- `signerIndex`
+- `localFileName`
+- `value` (public key)
+- `nonce`
+- `localPrivateKeyAvailable`
+- `localPrivateKeyError` (if missing/unusable)
 
-- If no management keys exist, agent-side signed requests cannot proceed.
-- If exactly one bootstrap key exists, its private key must be present and readable in `KEY_ROOT/management_keys`.
-- `existingAuthorizedSignerPublicKey` format is 32-byte hex (64 hex chars).
-- This signer key must already be allowed on the node; do not pass the newly created key here.
+Use this as the source of truth before any signed operation.
+
+## Creating a keypair
+
+`create_eddsa_management_keypair`:
+
+- writes files under `KEY_ROOT/management_keys`
+- labels file as `added_key_{N}`
+- returns generated public key and file paths
+- does not automatically authorize the new key
+
+## Authorizing a new key
+
+`add_eddsa_management_key` requires:
+
+- `signerIndex` of an already-authorized signer
+- `newPublicKey` to add
+
+Flow:
+
+1. Resolve signer from `signerIndex`
+2. Build canonical body with signer nonce
+3. Sign canonical message
+4. POST `/addManagementKey`
+
+## Operational checks
+
+- If only bootstrap key exists, ensure its private key is present locally.
+- If key files are moved or renamed manually, signer resolution can fail.
+- If `localPrivateKeyAvailable` is false, signing tools will fail for that key.
+
+## Recommended client behavior
+
+- Refresh `list_management_keys` before each signed workflow.
+- Show signer index and nonce to users when asking for approval.
+- Prefer explicit error surfacing (missing private key, unauthorized key, nonce mismatch).

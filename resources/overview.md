@@ -1,28 +1,49 @@
 # Continuum MCP Server Overview
 
-This MCP server is a thin orchestration layer over the node management API.
+This server helps an MCP client operate a Continuum node through safe, structured tools over the management API.
 
-## What the MCP host should know
+## MCP convention (prompt vs resource)
 
-- The server is tool-first and route-oriented.
-- Most business logic is:
-  - fetch/validate inputs,
-  - build canonical request payloads,
-  - sign with configured EdDSA management keys,
-  - call management API routes.
-- Signing is modular and reusable across routes (not tied to one endpoint).
+- MCP servers do not typically force a universal "system prompt" into every client session.
+- The standard pattern is to expose guidance as MCP resources and let the client load them at startup.
+- For this server, `overview.md` is the high-level onboarding resource, while other resource files contain step-specific detail.
 
-## Core operational modules
+## What this server is for
 
-- **Node discovery**: list available nodes and map IP -> node ID.
-- **Signing**: key listing, plan generation, canonical message signing.
-- **Route execution**: endpoint-specific tools (for example, group creation).
+- Discover node state and health (`version`, `get_machine_info`, `get_node_id`, `health`, `connectivity_health`, `logs`).
+- Manage EdDSA management keys and signer selection (`list_management_keys`, `create_eddsa_management_keypair`, `add_eddsa_management_key`).
+- Coordinate group lifecycle (`list_available_node_ids`, `list_valid_group_node_sets`, `create_group_request`, `accept_group_request`).
+- Coordinate MPC key generation (`create_keygen_request`, `accept_keygen_request`, keygen query tools).
+- Provide reusable request-signing utilities for signed management routes.
 
-## Recommended client orchestration style
+## Common node-operator loop
 
-1. Discover options (`list_available_node_ids`, signing keys).
-2. Select or provide concrete inputs.
-3. Build/sign as needed.
-4. Execute target route tool.
+1. Ensure management signing is available.
+   - Use `list_management_keys`.
+   - If needed: generate and add a key via `create_eddsa_management_keypair` + `add_eddsa_management_key`.
+   - If EdDSA is not configured yet, configure bootstrap management key material via node setup/browser flow.
 
-Keep prompts short and structured; rely on tool outputs as source of truth.
+2. Form a group with other nodes.
+   - Discover candidates with `list_available_node_ids` or `list_valid_group_node_sets`.
+   - Submit with `create_group_request`.
+   - Other members confirm with `accept_group_request`.
+
+3. Generate one or more MPC keys in that group.
+   - Start with `create_keygen_request`.
+   - Other members confirm with `accept_keygen_request`.
+
+4. Use generated MPC key(s) for transaction signing workflows.
+   - Members propose sign requests.
+   - At least `threshold + 1` members must agree/sign for MPC signature generation.
+
+5. Repeat for additional groups, keys, and signing operations.
+
+## Client orchestration guidance
+
+- Keep user interaction simple: fetch options first, then ask for concrete selection, then execute.
+- Prefer explicit tool inputs (e.g., `signerIndex`, concrete node IDs).
+- Treat tool output as source of truth; avoid guessing route payload shape.
+- Load detailed docs by topic:
+  - signing: `sign.md`
+  - groups: `group.md`
+  - management keys: `management_keys.md`

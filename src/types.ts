@@ -5,7 +5,7 @@ export const HEX_64_REGEX = /^[a-fA-F0-9]{64}$/
 
 export const keyTypes = ["ed25519", "secp256k1"] as const
 export type Key = typeof keyTypes[number]
-export const KeySchema = z.enum(keyTypes)
+export const KeyTypeSchema = z.enum(keyTypes)
 
 export const msgCheckTypes = ["multi-agree", "tx-check"] as const
 export type MsgCheck = typeof msgCheckTypes[number]
@@ -133,7 +133,7 @@ export const GroupSchema = {
       ethereumaddress: ECDSAAddressSchema,
       groupid: GroupIdSchema,
       threshold: z.number().nonnegative().describe("Threshold for this KeyGen; threshold + 1 nodes required to generate signature"),
-      keytype: KeySchema,
+      keytype: KeyTypeSchema,
     },
   ],
 }

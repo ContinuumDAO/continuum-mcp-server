@@ -1,32 +1,73 @@
-# Signing in This MCP Server
+# Signing Model
 
-This server uses a modular signing flow so signature logic can be reused across routes (not just group creation).
+This server uses a reusable EdDSA management signing flow across signed routes.
 
-## Available signing tools
+## Why this matters
 
-- `list_management_signing_keys`
-  - Returns all usable **EdDSA (Ed25519)** management keys with stable `id` and current `nonce`.
+Most management API writes require:
+
+- signer identity
+- correct nonce for that signer
+- canonical message body
+- signature over that exact message
+
+The tools below standardize this process for clients.
+
+## Primary signing tools
+
+- `list_management_keys`
+  - Returns authorized EdDSA keys, nonce, local signer mapping, and private-key availability status.
 - `build_signed_request_plan`
-  - Route-agnostic planner. Given an `action`, `selectedKeyId`, and unsigned `payload`, it returns:
-    - `unsignedBody` (with `nonce` filled and `sig: ""`)
-    - `messageToSign` (canonical JSON string)
-    - selected key metadata
+  - Route-agnostic helper that builds `unsignedBody` and `messageToSign` for a signer index.
 - `sign_management_message`
-  - Route-agnostic signer. Given `selectedKeyId` + `message`, returns an EdDSA signature.
+  - Route-agnostic helper that returns EdDSA signature for a message.
 
-## Practical flow for any signed route
+## Canonical flow
 
-1. Choose a signing key via `list_management_signing_keys`.
-2. Build canonical body/message via `build_signed_request_plan`.
-3. Sign the message via `sign_management_message`.
-4. Submit the target route with the same body plus `sig = signature`.
+1. Choose signer index
+   - Call `list_management_keys`.
+2. Build canonical payload
+   - Call `build_signed_request_plan` with `action`, `signerIndex`, and route payload.
+3. Sign canonical message
+   - Call `sign_management_message` with same `signerIndex` and `messageToSign`.
+4. Submit route call
+   - Use returned signature in target route body (`sig = signature`).
 
-## Example: `create_group_request`
+## Signer index convention
 
-`create_group_request` applies the same pattern internally:
-- validates/selects node set,
-- builds canonical request body with nonce,
-- signs with selected EdDSA management key,
-- posts `/newGroupRequest`.
+- `0` = bootstrap signer (non-`added_key_N` local key)
+- `N >= 1` = `added_key_N`
 
-Use this same 4-step pattern when adding future tools that require management signatures.
+This lets clients avoid direct file/path details.
+
+## Key format handling
+
+Server supports local private key material in these forms:
+
+- OpenSSH private key block
+- PEM PKCS#8 private key
+- DER PKCS#8 hex
+
+Public key normalization to 32-byte hex is applied where required by API calls.
+
+## Typical route usage
+
+- Group creation: `create_group_request`
+- Group agree: `accept_group_request`
+- Key add: `add_eddsa_management_key`
+- Keygen request/agree tools
+
+All use the same signer-index + nonce + canonical message pattern.
+
+## Common failure causes
+
+- signer index does not map to local key file
+- key exists on node but private key is missing locally
+- signature built from non-canonical message body
+- stale nonce due to manually edited body
+
+## Client guidance
+
+- Never mutate `messageToSign` before signing.
+- Keep signing and submit steps tightly coupled.
+- If signing fails, refresh `list_management_keys` before retry.

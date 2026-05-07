@@ -1,7 +1,7 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
-import { ManagementSigSchema, NonceSchema, type EdDSAPubKey, type Nonce, type Sig } from "./types.js"
+import { ManagementSigSchema, NonceSchema, type Nonce, type Sig } from "./types.js"
 
 type ManagementKeyOption = {
   id: string
@@ -11,18 +11,9 @@ type ManagementKeyOption = {
   label?: string
 }
 
-type LocalManagementKeyEntry = {
-  fileName: string
-  publicKeyRaw: string
-  publicKeyHex?: EdDSAPubKey
-}
-
 type SigningToolsDeps = {
   server: McpServer
   fetchManagementKeyOptions: () => Promise<ManagementKeyOption[]>
-  listLocalManagementPublicKeys: () => Promise<LocalManagementKeyEntry[]>
-  getPrivateKeyStatus: (option: ManagementKeyOption) => Promise<{ available: boolean; reason?: string }>
-  normalizeEd25519PublicKeyToHex: (value: string) => string
   getManagementKeyOptionByIndex: (keyOptions: ManagementKeyOption[], signerIndex: number) => Promise<ManagementKeyOption>
   buildManagementSigningMessage: (bodyWithEmptySig: Record<string, unknown>) => string
   signManagementMessage: (option: ManagementKeyOption, message: string) => Promise<Sig>
@@ -32,71 +23,10 @@ export function registerSigningTools(deps: SigningToolsDeps): void {
   const {
     server,
     fetchManagementKeyOptions,
-    listLocalManagementPublicKeys,
-    getPrivateKeyStatus,
-    normalizeEd25519PublicKeyToHex,
     getManagementKeyOptionByIndex,
     buildManagementSigningMessage,
     signManagementMessage,
   } = deps
-
-  server.registerTool(
-    "list_management_signing_keys",
-    {
-      description: "List configured EdDSA signing keys and their signer index mapping (0=bootstrap, N=added_key_N).",
-      outputSchema: z.object({
-        keys: z.array(
-          z.object({
-            signerIndex: z.number().int().nonnegative().optional(),
-            localFileName: z.string().optional(),
-            kind: z.literal("EdDSA"),
-            value: z.string(),
-            nonce: NonceSchema,
-            label: z.string().optional(),
-            localPrivateKeyAvailable: z.boolean(),
-            localPrivateKeyError: z.string().optional(),
-          }),
-        ),
-      }),
-    },
-    async (): Promise<CallToolResult> => {
-      const keyOptions = await fetchManagementKeyOptions()
-      const localKeys = await listLocalManagementPublicKeys()
-      const localFileByPub = new Map(
-        localKeys.filter((k) => k.publicKeyHex).map((k) => [k.publicKeyHex as EdDSAPubKey, k.fileName] as const),
-      )
-      const keys = await Promise.all(
-        keyOptions.map(async (key) => {
-          const privateKeyStatus = await getPrivateKeyStatus(key)
-          const normalizedPublic = normalizeEd25519PublicKeyToHex(key.value) as EdDSAPubKey
-          const localFileName = localFileByPub.get(normalizedPublic)
-          let signerIndex: number | undefined
-          if (localFileName) {
-            const addedMatch = localFileName.match(/^added_key_(\d+)$/i)
-            signerIndex = addedMatch ? Number(addedMatch[1]) : 0
-          }
-          return {
-            ...key,
-            signerIndex,
-            localFileName,
-            localPrivateKeyAvailable: privateKeyStatus.available,
-            localPrivateKeyError: privateKeyStatus.reason,
-          }
-        }),
-      )
-      return {
-        content: [{
-          type: "text",
-          text: keys
-            .map((k, i) =>
-              `${i + 1}. signerIndex=${k.signerIndex ?? "?"} file=${k.localFileName ?? "?"} [${k.kind}] ${k.value} nonce=${k.nonce}${k.label ? ` (${k.label})` : ""} localPrivateKey=${k.localPrivateKeyAvailable ? "ok" : "missing/unusable"}`,
-            )
-            .join("\n"),
-        }],
-        structuredContent: { keys },
-      }
-    },
-  )
 
   server.registerTool(
     "build_signed_request_plan",

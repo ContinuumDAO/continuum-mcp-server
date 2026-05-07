@@ -7,7 +7,7 @@
     "build": "tsc && chmod 755 build/index.js",
     "test:tool:list-available-node-ids": "node scripts/mcp-test/list_available_node_ids.js",
     "test:tool:has-eddsa-management-key": "node scripts/mcp-test/has_eddsa_management_key.js",
-    "test:tool:list-management-signing-keys": "node scripts/mcp-test/list_management_signing_keys.js",
+    "test:tool:list-management-keys": "node scripts/mcp-test/list_management_keys.js",
     "test:tool:build-signed-request-plan": "node scripts/mcp-test/build_signed_request_plan.js",
     "test:tool:sign-management-message": "node scripts/mcp-test/sign_management_message.js",
     "test:tool:create-group-request": "node scripts/mcp-test/create_group_request.js",
