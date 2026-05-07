@@ -1,0 +1,34 @@
+{
+  "name": "continuum-mcp-server",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc && chmod 755 build/index.js",
+    "test:tool:list-available-node-ids": "node scripts/mcp-test/list_available_node_ids.js",
+    "test:tool:has-eddsa-management-key": "node scripts/mcp-test/has_eddsa_management_key.js",
+    "test:tool:list-management-signing-keys": "node scripts/mcp-test/list_management_signing_keys.js",
+    "test:tool:build-signed-request-plan": "node scripts/mcp-test/build_signed_request_plan.js",
+    "test:tool:sign-management-message": "node scripts/mcp-test/sign_management_message.js",
+    "test:tool:create-group-request": "node scripts/mcp-test/create_group_request.js",
+    "test:resources": "node scripts/mcp-test/resources.js",
+    "keys:list-local": "node scripts/list-local-management-keys.js",
+    "sign-json-with-key": "node scripts/sign-json-with-key.js"
+  },
+  "files": [
+    "build"
+  ],
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "ethers": "^6.16.0",
+    "zod": "^3.25.76"
+  }
+}
