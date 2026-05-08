@@ -24,18 +24,18 @@ This server helps an MCP client operate a Continuum node through safe, structure
    - Optionally pin default signer via `set_preferred_management_key`.
    - If EdDSA is not configured yet, configure bootstrap management key material via node setup/browser flow.
 
-2. Form a group with other nodes.
+2. Form a group with other nodes (unanimous agreement required).
    - Discover candidates with `list_available_node_ids` or `list_valid_group_node_sets`.
    - Submit with `create_group_request`.
-   - Other members confirm with `accept_group_request`.
+   - Other members confirm with `accept_group_request` (originator is auto-agreed).
 
-3. Generate one or more MPC keys in that group.
+3. Generate one or more MPC keys in that group (unanimous agreement required).
    - Start with `create_mpc_keygen_request`.
-   - Other members confirm with `accept_mpc_keygen_request`.
+   - Other members confirm with `accept_mpc_keygen_request` (originator is auto-agreed).
 
 4. Use generated MPC key(s) for transaction signing workflows.
    - Members propose sign requests.
-   - At least `threshold + 1` members must agree/sign for MPC signature generation.
+   - At least `gate` members must agree/sign for MPC SIGNATURE generation (with API threshold = gate - 1). This gate applies to sign requests only; group creation and keygen creation require all requested members to agree.
 
 5. Repeat for additional groups, keys, and signing operations.
 

@@ -45,7 +45,7 @@ const KeyGenRequestSchema = z.object({
   KeyType: KeyTypeSchema,
   MsgCheck: MsgCheckSchema,
   SigList: z.record(NodeIdSchema, z.string()),
-  Threshold: z.number().int().nonnegative(),
+  Gate: z.number().int().positive(),
   timepoint: z.string(),
   status: z.string().optional(),
   originator: NodeIdSchema.optional(),
@@ -56,7 +56,7 @@ const KeyGenResultSchema = z.object({
   pubkeyhex: PubKeySchema.optional(),
   keylist: z.array(NodeIdSchema).optional(),
   groupid: GroupIdSchema.optional(),
-  threshold: z.number().int().nonnegative().optional(),
+  gate: z.number().int().positive().optional(),
   keytype: KeyTypeSchema.optional(),
   msgcheck: MsgCheckSchema.optional(),
   savedata: z.string().optional(),
@@ -79,10 +79,10 @@ export function registerKeyGenTools(deps: KeyGenToolsDeps): void {
   server.registerTool(
     "create_mpc_keygen_request",
     {
-      description: "Initiate a request to members of a given Group ID to generate a new MPC key pair.",
+      description: "Initiate a request to members of a given Group ID to generate a new MPC key pair. KeyGen is created only after ALL requested group members agree; originator is auto-agreed on creation. Gate applies later to MPC sign requests only.",
       inputSchema: z.object({
         groupId: GroupIdSchema,
-        threshold: z.number().int().nonnegative(),
+        gate: z.number().int().min(2),
         msgCheck: MsgCheckSchema,
         keyType: KeyTypeSchema,
       }),
@@ -100,12 +100,12 @@ export function registerKeyGenTools(deps: KeyGenToolsDeps): void {
     },
     async ({
       groupId,
-      threshold,
+      gate,
       msgCheck,
       keyType,
     }: {
       groupId: GroupId
-      threshold: number
+      gate: number
       msgCheck: MsgCheck
       keyType: Key
     }): Promise<CallToolResult> => {
@@ -117,7 +117,7 @@ export function registerKeyGenTools(deps: KeyGenToolsDeps): void {
         Nonce: selectedSigningKey.nonce,
         Sig: "",
         clientPk: selectedSigningKey.value,
-        threshold,
+        threshold: gate - 1,
         groupId,
         msgCheck,
         keyType,
@@ -136,7 +136,7 @@ export function registerKeyGenTools(deps: KeyGenToolsDeps): void {
   server.registerTool(
     "accept_mpc_keygen_request",
     {
-      description: "Accept a request from another member of a common Group ID to generate a new MPC key pair.",
+      description: "Accept a request from another member of a common Group ID to generate a new MPC key pair. Used by non-originator members. All requested members must agree for KeyGen creation to succeed.",
       inputSchema: z.object({
         requestId: KeyGenIdSchema,
       }),
@@ -188,7 +188,17 @@ export function registerKeyGenTools(deps: KeyGenToolsDeps): void {
         pagenum: z.number().int().nonnegative().optional(),
         pagesize: z.number().int().positive().optional(),
       }),
-      outputSchema: z.object({ requests: z.array(KeyGenRequestSchema) }),
+      outputSchema: z.object({
+        localNodeId: NodeIdSchema,
+        requests: z.array(KeyGenRequestSchema),
+        agreementChecks: z.array(z.object({
+          requestId: KeyGenIdSchema,
+          originator: NodeIdSchema.optional(),
+          isOriginatorLocal: z.boolean(),
+          agreementRequired: z.boolean(),
+          note: z.string(),
+        })),
+      }),
     },
     async ({
       filter,
@@ -213,9 +223,25 @@ export function registerKeyGenTools(deps: KeyGenToolsDeps): void {
       const requests = (Array.isArray(raw) ? raw : []).map((x, i) =>
         normalizeKeyGenRequest(x, `list_keygen_requests[${i}]`, toMcpApiError),
       )
+      const localNodeId = await mgtGET<string>("/getNodeKey")
+      const agreementChecks = requests.map((request) => {
+        const isOriginatorLocal = request.originator === localNodeId
+        const agreementRequired = request.originator ? !isOriginatorLocal : true
+        return {
+          requestId: request.requestid,
+          originator: request.originator,
+          isOriginatorLocal,
+          agreementRequired,
+          note: !request.originator
+            ? "Originator is not provided in this response; assuming agreement may be required."
+            : isOriginatorLocal
+              ? "Originator is local node; agreement is not required."
+              : "Originator is a different node; agreement is required.",
+        }
+      })
       return {
-        content: [{ type: "text", text: JSON.stringify({ requests }) }],
-        structuredContent: { requests },
+        content: [{ type: "text", text: JSON.stringify({ localNodeId, requests, agreementChecks }) }],
+        structuredContent: { localNodeId, requests, agreementChecks },
       }
     },
   )
@@ -225,11 +251,31 @@ export function registerKeyGenTools(deps: KeyGenToolsDeps): void {
     {
       description: "Get MPC key generation request by request ID.",
       inputSchema: z.object({ id: KeyGenIdSchema }),
-      outputSchema: KeyGenRequestSchema,
+      outputSchema: z.object({
+        request: KeyGenRequestSchema,
+        localNodeId: NodeIdSchema,
+        isOriginatorLocal: z.boolean(),
+        agreementRequired: z.boolean(),
+        note: z.string(),
+      }),
     },
     async ({ id }: { id: KeyGenId }): Promise<CallToolResult> => {
       const raw = await mgtGET<unknown>("/getKeyGenRequestById", new URLSearchParams({ id }))
-      const output = normalizeKeyGenRequest(raw, "get_keygen_request_by_id", toMcpApiError)
+      const request = normalizeKeyGenRequest(raw, "get_keygen_request_by_id", toMcpApiError)
+      const localNodeId = await mgtGET<string>("/getNodeKey")
+      const isOriginatorLocal = request.originator === localNodeId
+      const agreementRequired = request.originator ? !isOriginatorLocal : true
+      const output = {
+        request,
+        localNodeId,
+        isOriginatorLocal,
+        agreementRequired,
+        note: !request.originator
+          ? "Originator is not provided in this response; assuming agreement may be required."
+          : isOriginatorLocal
+            ? "Originator is local node; agreement is not required."
+            : "Originator is a different node; agreement is required.",
+      }
       return {
         content: [{ type: "text", text: JSON.stringify(output) }],
         structuredContent: output,
@@ -344,7 +390,7 @@ function normalizeKeyGenRequest(
     KeyType: asString(pick(src, ["KeyType", "keyType"]), `${context}.KeyType`, toMcpApiError) as Key,
     MsgCheck: asString(pick(src, ["MsgCheck", "msgCheck"]), `${context}.MsgCheck`, toMcpApiError) as MsgCheck,
     SigList: asRecordOptional(pick(src, ["SigList", "sigList"])) as Record<string, string>,
-    Threshold: asNumber(pick(src, ["Threshold", "threshold"]), `${context}.Threshold`, toMcpApiError),
+    Gate: asNumber(pick(src, ["Threshold", "threshold"]), `${context}.Threshold`, toMcpApiError) + 1,
     timepoint: asString(pick(src, ["timepoint", "Timepoint"]), `${context}.timepoint`, toMcpApiError),
     status: asOptionalString(pick(src, ["status"])),
     originator: asOptionalString(pick(src, ["originator", "Originator"])) as z.infer<typeof NodeIdSchema> | undefined,
@@ -365,7 +411,10 @@ function normalizeKeyGenResult(
     pubkeyhex: asOptionalString(pick(src, ["pubkeyhex", "PubKeyHex"])) as z.infer<typeof PubKeySchema> | undefined,
     keylist: asOptionalStringArray(pick(src, ["keylist", "KeyList"])) as z.infer<typeof NodeIdSchema>[] | undefined,
     groupid: asOptionalString(pick(src, ["groupid", "GroupId"])) as GroupId | undefined,
-    threshold: asOptionalNumber(pick(src, ["threshold", "Threshold"])),
+    gate: (() => {
+      const rawThreshold = asOptionalNumber(pick(src, ["threshold", "Threshold"]))
+      return rawThreshold === undefined ? undefined : rawThreshold + 1
+    })(),
     keytype: asOptionalString(pick(src, ["keytype", "KeyType"])) as Key | undefined,
     msgcheck: asOptionalString(pick(src, ["msgcheck", "MsgCheck"])) as MsgCheck | undefined,
     savedata: asOptionalString(pick(src, ["savedata", "SaveData"])),

@@ -4,13 +4,13 @@ This document covers MPC key generation request lifecycle in this server.
 
 ## Purpose
 
-After a group is formed, keygen creates one MPC keypair shared across group members.
+After a group is formed, keygen creates one MPC keypair shared across group members. KeyGen creation itself is unanimous: all requested group members must accept the request. The originator auto-agrees when creating the request and does not need a separate accept step.
 That key can later be used in signing workflows.
 
 ## Primary tools
 
 - `create_mpc_keygen_request`
-  - Starts keygen for a group with threshold/key type/msgCheck using preferred signer (or fallback signer).
+  - Starts keygen for a group with gate/key type/msgCheck using preferred signer (or fallback signer).
 - `accept_mpc_keygen_request`
   - Accepts a pending keygen request as another group member.
 - `list_mpc_keygen_requests`
@@ -31,11 +31,12 @@ That key can later be used in signing workflows.
 3. Create request
    - Call `create_mpc_keygen_request` with:
      - `groupId`
-     - `threshold`
+     - `gate`
      - `msgCheck`
      - `keyType`
 4. Peers accept
-   - Each member calls `accept_mpc_keygen_request`.
+   - Each non-originator requested member calls `accept_mpc_keygen_request`.
+   - KeyGen is formed only when all requested members have agreed; originator agreement is automatic on request creation.
 5. Track progress
    - Poll `list_mpc_keygen_requests` / `get_mpc_keygen_request_by_id`.
 6. Read result
@@ -44,7 +45,7 @@ That key can later be used in signing workflows.
 ## Inputs that matter
 
 - `groupId`: target group to generate key for.
-- `threshold`: approvals needed are effectively `threshold + 1` for signing stage.
+- `gate`: number of members that must approve an MPC SIGN request after KeyGen is formed. Internally, API `threshold` is sent as `gate - 1`. Gate does not change unanimous agreement requirements for group/keygen creation.
 - `msgCheck`: policy mode for downstream signing behavior.
 - `keyType`: key curve/type (from allowed key types).
 

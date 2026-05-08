@@ -106,7 +106,7 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
   server.registerTool(
     "accept_group_request",
     {
-      description: "Agree to a pending incoming group request by request ID using preferred signer (or first locally-usable allowed signer).",
+      description: "Agree to a pending incoming group request by request ID using preferred signer (or first locally-usable allowed signer). Used by non-originator requested nodes; originator auto-agrees at request creation. A group is formed only after ALL requested nodes agree.",
       inputSchema: z.object({
         requestId: GroupRequestIdSchema,
       }),
@@ -156,7 +156,7 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
   server.registerTool(
     "create_group_request",
     {
-      description: "Create a new MPC group request from explicit node IDs. Uses preferred signer (or first locally-usable allowed signer). Use list_available_node_ids/list_valid_group_node_sets first; nodeIds must include your node, be from configured nodes, min 2, and not already exist.",
+      description: "Create a new MPC group request from explicit node IDs. Group creation requires unanimous agreement from ALL requested nodes; originator is auto-agreed on creation. Uses preferred signer (or first locally-usable allowed signer). Use list_available_node_ids/list_valid_group_node_sets first; nodeIds must include your node, be from configured nodes, min 2, and not already exist.",
       inputSchema: z.object({
         nodeIds: z.array(NodeIdSchema).min(2),
       }),
@@ -277,7 +277,17 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
         pagenum: z.number().int().nonnegative().optional(),
         pagesize: z.number().int().positive().optional(),
       }),
-      outputSchema: z.object({ requests: z.array(GroupRequestSchema) }),
+      outputSchema: z.object({
+        localNodeId: NodeIdSchema,
+        requests: z.array(GroupRequestSchema),
+        agreementChecks: z.array(z.object({
+          requestId: GroupRequestIdSchema,
+          originator: NodeIdSchema,
+          isOriginatorLocal: z.boolean(),
+          agreementRequired: z.boolean(),
+          note: z.string(),
+        })),
+      }),
     },
     async ({ filter, pagenum, pagesize }: { filter?: Filter; pagenum?: number; pagesize?: number }): Promise<CallToolResult> => {
       const params = new URLSearchParams()
@@ -293,9 +303,22 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
 
       const rawRequests = await mgtGET<unknown[]>("/listNewGroupRequests", params)
       const requests = rawRequests.map((item, idx) => normalizeGroupRequest(item, `list_group_requests[${idx}]`, toMcpApiError))
+      const localNodeId = await mgtGET<NodeId>("/getNodeKey")
+      const agreementChecks = requests.map((request) => {
+        const isOriginatorLocal = request.originator === localNodeId
+        return {
+          requestId: request.RequestId,
+          originator: request.originator,
+          isOriginatorLocal,
+          agreementRequired: !isOriginatorLocal,
+          note: isOriginatorLocal
+            ? "Originator is local node; agreement is not required."
+            : "Originator is a different node; agreement is required.",
+        }
+      })
       return {
-        content: [{ type: "text", text: JSON.stringify({ requests }) }],
-        structuredContent: { requests },
+        content: [{ type: "text", text: JSON.stringify({ localNodeId, requests, agreementChecks }) }],
+        structuredContent: { localNodeId, requests, agreementChecks },
       }
     },
   )
@@ -338,13 +361,30 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
       inputSchema: z.object({
         id: GroupRequestIdSchema,
       }),
-      outputSchema: GroupRequestSchema,
+      outputSchema: z.object({
+        request: GroupRequestSchema,
+        localNodeId: NodeIdSchema,
+        isOriginatorLocal: z.boolean(),
+        agreementRequired: z.boolean(),
+        note: z.string(),
+      }),
     },
     async ({ id }: { id: GroupRequestId }): Promise<CallToolResult> => {
       const params = new URLSearchParams()
       params.append("id", id)
       const rawOutput = await mgtGET<unknown>("/getNewGroupRequestById", params)
-      const output = normalizeGroupRequest(rawOutput, "get_group_request_by_id", toMcpApiError)
+      const request = normalizeGroupRequest(rawOutput, "get_group_request_by_id", toMcpApiError)
+      const localNodeId = await mgtGET<NodeId>("/getNodeKey")
+      const isOriginatorLocal = request.originator === localNodeId
+      const output = {
+        request,
+        localNodeId,
+        isOriginatorLocal,
+        agreementRequired: !isOriginatorLocal,
+        note: isOriginatorLocal
+          ? "Originator is local node; agreement is not required."
+          : "Originator is a different node; agreement is required.",
+      }
       return {
         content: [{ type: "text", text: JSON.stringify(output) }],
         structuredContent: output,

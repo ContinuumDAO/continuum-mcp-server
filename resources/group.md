@@ -5,7 +5,7 @@ This document explains how to create and manage MPC groups with this server.
 ## Purpose
 
 Groups define which node IDs can participate in key generation and signing.
-A valid group must include your node and at least one peer.
+A valid group must include your node and at least one peer. Group creation is unanimous: all requested nodes must accept before the group is formed. The originator is auto-agreed when creating the request and does not perform a separate accept step.
 
 ## Primary tools
 
@@ -14,7 +14,7 @@ A valid group must include your node and at least one peer.
 - `list_valid_group_node_sets`
   - Returns currently valid 2-node sets that include your node and do not already exist.
 - `create_group_request`
-  - Creates a group request from explicit `nodeIds` using preferred signer (or fallback signer).
+  - Creates a group request from explicit `nodeIds` using preferred signer (or fallback signer). The originator auto-agrees on submit; only the other requested nodes must call `accept_group_request`.
 - `list_group_requests`
   - Lists incoming and historical group requests with optional filters.
 - `get_group_request_by_id`
@@ -38,6 +38,7 @@ A valid group must include your node and at least one peer.
    - Call `create_group_request` with `nodeIds`.
 5. Group peers accept
    - Other members call `accept_group_request`.
+   - All requested nodes must accept; otherwise group creation does not complete. The originator is already counted as agreed at creation time.
 6. Verify completion
    - Use `list_group_results` or `get_group_result_by_id`.
 

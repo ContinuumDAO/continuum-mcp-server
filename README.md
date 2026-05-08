@@ -155,7 +155,7 @@ Example KeyGen request in the server:
         },
         "clientKey": {...},
         "groupId": {...},
-        "threshold": {
+        "gate": {
           "type": "integer",
           "minimum": 1,
           "maximum": <n>
@@ -186,7 +186,7 @@ Then the client can responde with:
       "clientAuth": "ed25519",
       "clientKey": "9192836490182734",
       "groupId": "8192384719263904871234",
-      "threshold": "2",
+      "gate": "3",
       "keyType": "secp256k1"
     }
   }
@@ -577,7 +577,7 @@ To which the server would respond with its full list of available tools:
       {
         "name": "get_keygen_data",
         "title": "Get Information for a KeyGen",
-        "description": "Get information for a KeyGen such as type, threshold, signing algorithm, etc.",
+        "description": "Get information for a KeyGen such as type, gate, signing algorithm, etc.",
         "inputSchema": [
           {
             "type": "object",
@@ -597,16 +597,16 @@ To which the server would respond with its full list of available tools:
               "type": "string",
               "description": "multi-agree or tx-check"
             },
-            "threshold": {
+            "gate": {
               "type": "number",
-              "description": "Threshold number of nodes required to sign minus 1"
+              "description": "Number of nodes required to sign an MPC sign request (gate). Internally, API threshold = gate - 1"
             },
             "keytype": {
               "type": "string",
               "description": "secp256k1 or ed25519 key type"
             }
           },
-          "required": ["msgcheck", "threshold", "keytype"]
+          "required": ["msgcheck", "gate", "keytype"]
         }
       }
     ]
@@ -641,7 +641,7 @@ To which the server would respond with:
     "content": [
       {
         "type": "text",
-        "text": "KeyGen data for KeyGen20260424000000: multi-agree, threshold 2, secp256k1, metamask, etc."
+        "text": "KeyGen data for KeyGen20260424000000: multi-agree, gate 3, secp256k1, metamask, etc."
       }
     ],
     "isError": false
@@ -737,7 +737,7 @@ A valid response to the get_keygen_data tool would be:
     ],
     "structuredContent": {
       "msgcheck": "multi-agree",
-      "threshold": 2,
+      "gate": 3,
       "keytype": "ed25519"
     }
   }
