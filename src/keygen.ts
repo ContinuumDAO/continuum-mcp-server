@@ -166,6 +166,7 @@ export function registerKeyGenTools(deps: KeyGenToolsDeps): void {
         nodeKey,
         Nonce: selectedSigningKey.nonce,
         Sig: "",
+        clientPk: selectedSigningKey.value,
         requestId,
       }
       const signingMessage = buildManagementSigningMessage(unsignedBody)
