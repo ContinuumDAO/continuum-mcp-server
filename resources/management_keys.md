@@ -14,6 +14,8 @@ Maintain usable local signer keys and keep authorized public keys in sync with t
 - `add_eddsa_management_key`
 - `set_preferred_management_key`
 - `get_preferred_management_key`
+- `build_signed_request_plan` (optional: canonical body + message for custom flows)
+- `sign_management_message` (optional: sign a canonical management message)
 
 ## Key lifecycle
 

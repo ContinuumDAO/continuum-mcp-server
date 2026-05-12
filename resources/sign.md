@@ -22,6 +22,15 @@ Each route tool performs its own signing internally so clients only call one too
 - `get_preferred_management_key`
   - Reads current preferred signer from `/getPreferredSigner`.
 
+## Optional low-level helpers (management)
+
+These are registered alongside management key tools for debugging or custom flows:
+
+- `build_signed_request_plan` — canonical unsigned body and `messageToSign` for a payload.
+- `sign_management_message` — sign a canonical message with the resolved management signer.
+
+Prefer calling the route-specific tools directly; they perform the same signing internally.
+
 ## Canonical flow
 
 1. (Optional) set preferred signer

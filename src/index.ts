@@ -25,6 +25,10 @@ import { registerKeyTools } from "./management_keys.js"
 import { registerKeyGenTools } from "./keygen.js"
 import path from "path"
 import { resolveKeyRoot } from "./key-root.js"
+import { loadAddressBookRegistry, registerAddressBookTools } from "./registry/address_book.js"
+import { loadContractsRegistry } from "./registry/contracts.js"
+import { loadNetworksRegistry } from "./registry/networks.js"
+import { loadTokensRegistry } from "./registry/tokens.js"
 
 // Create server instance
 const server = new McpServer({
@@ -203,8 +207,25 @@ registerKeyGenTools({
   buildManagementSigningMessage,
   signManagementMessage,
 })
+registerAddressBookTools({
+  server,
+  mgtGET,
+  mgtPOST,
+  toMcpApiError,
+  fetchManagementKeyOptions,
+  resolveManagementSigningKeyOption,
+  buildManagementSigningMessage,
+  signManagementMessage,
+})
 
 async function main() {
+  await Promise.all([
+    loadAddressBookRegistry(),
+    loadContractsRegistry(),
+    loadTokensRegistry(),
+    loadNetworksRegistry(),
+  ])
+
   // Let clients refresh tools list immediately after initialization.
   // MCP notification method: "notifications/tools/list_changed"
   server.server.oninitialized = () => {

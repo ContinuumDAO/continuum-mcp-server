@@ -38,6 +38,15 @@ export const GroupIdSchema = z.string().regex(HEX_64_REGEX, "Group ID must be a 
 export const NonceSchema = z.number().int().nonnegative()
 export const ManagementSigSchema = EdDSASigSchema
 
+/** Resolved EdDSA management key included in signed-tool outputs. */
+export const SelectedSigningKeySchema = z.object({
+  id: z.string(),
+  kind: z.literal("EdDSA"),
+  value: z.string(),
+  nonce: NonceSchema,
+  label: z.string().optional(),
+})
+
 export const GroupRequestIdSchema = z.string().regex(/^NewGroup[a-f0-9]{25}$/, "Group ID must be in the form: NewGroup202603271129339998910db0b")
 export const KeyGenIdSchema = z.string().regex(/^KeyGen[a-f0-9]{25}$/, "KeyGen ID must be in the form KeyGen20260111003720999cf104d0f")
 
@@ -160,6 +169,34 @@ export const ConfiguredNodeSchema = z.object({
   publicKey: NodeIdSchema,
 })
 
+/** Management HTTP paths for known-address (address book) registry operations. */
+export const ADDRESS_BOOK_REGISTRY_API_PATHS = {
+  add_to_address_book_registry: "/addKnownAddress",
+  remove_from_address_book_registry: "/removeKnownAddress",
+  get_address_book_registry: "/getKnownAddresses",
+} as const
+
+export type AddressBookRegistryOperationId = keyof typeof ADDRESS_BOOK_REGISTRY_API_PATHS
+
+/** `GET /getKnownAddresses` query parameters. */
+export const GetKnownAddressesQuerySchema = z.object({
+  chain_type: z.string().min(1).optional(),
+  chain_id: z.string().min(1).optional(),
+  is_contract: z.enum(["0", "1"]).optional(),
+})
+
+/** One known address entry as returned under each chain type key in `GET /getKnownAddresses` `data`. */
+export const KnownAddressEntrySchema = z.object({
+  address: z.string(),
+  name: z.string().optional(),
+  chainIds: z.array(z.string()),
+  isContract: z.boolean(),
+  updatedAt: z.string(),
+})
+
+/** `GET /getKnownAddresses` success `data`: chain type → list of entries. */
+export const GetKnownAddressesDataSchema = z.record(z.string(), z.array(KnownAddressEntrySchema))
+
 export type Logs = z.infer<typeof LogsSchema>
 export type MachineInfo = z.infer<typeof MachineInfoSchema>
 
@@ -177,6 +214,7 @@ export type NodeId = z.infer<typeof NodeIdSchema>
 export type GroupId = z.infer<typeof GroupIdSchema>
 export type Nonce = z.infer<typeof NonceSchema>
 export type Sig = z.infer<typeof ManagementSigSchema>
+export type SelectedSigningKey = z.infer<typeof SelectedSigningKeySchema>
 
 export type GroupRequestId = z.infer<typeof GroupRequestIdSchema>
 export type KeyGenId = z.infer<typeof KeyGenIdSchema>
@@ -184,6 +222,9 @@ export type KeyGenId = z.infer<typeof KeyGenIdSchema>
 export type Subscription = z.infer<typeof SubscriptionSchema>
 export type NodeConnectivityResult = z.infer<typeof NodeConnectivityResultSchema>
 export type ConfiguredNode = z.infer<typeof ConfiguredNodeSchema>
+export type KnownAddressEntry = z.infer<typeof KnownAddressEntrySchema>
+export type GetKnownAddressesData = z.infer<typeof GetKnownAddressesDataSchema>
+export type GetKnownAddressesQuery = z.infer<typeof GetKnownAddressesQuerySchema>
 export type MessageToSignResponse = z.infer<typeof MessageToSignResponseSchema>
 export type MqttKey = z.infer<typeof MqttKeySchema>
 export type ConfigUpdatePlanResponse = z.infer<typeof ConfigUpdatePlanResponseSchema>

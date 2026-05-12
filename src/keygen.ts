@@ -4,10 +4,12 @@ import { z } from "zod"
 import {
   NodeIdSchema,
   PubKeySchema,
+  ECDSAAddressSchema,
   GroupIdSchema,
   MsgCheckSchema,
   KeyTypeSchema,
   KeyGenIdSchema,
+  SelectedSigningKeySchema,
   type GroupId,
   type KeyGenId,
   type MsgCheck,
@@ -54,12 +56,18 @@ const KeyGenRequestSchema = z.object({
 const KeyGenResultSchema = z.object({
   requestid: z.string(),
   pubkeyhex: PubKeySchema.optional(),
+  ethereumaddress: ECDSAAddressSchema.optional(),
+  solanaaddress: z.string().optional(),
+  sorobanaddress: z.string().optional(),
+  nearaddress: z.string().optional(),
+  tonaddress: z.string().optional(),
   keylist: z.array(NodeIdSchema).optional(),
   groupid: GroupIdSchema.optional(),
   gate: z.number().int().positive().optional(),
   keytype: KeyTypeSchema.optional(),
   msgcheck: MsgCheckSchema.optional(),
   savedata: z.string().optional(),
+  globalnonce: z.number().int().nonnegative().optional(),
   timepoint: z.string(),
   status: z.string().optional(),
 })
@@ -88,13 +96,7 @@ export function registerKeyGenTools(deps: KeyGenToolsDeps): void {
       }),
       outputSchema: z.object({
         requestId: KeyGenIdSchema,
-        selectedSigningKey: z.object({
-          id: z.string(),
-          kind: z.literal("EdDSA"),
-          value: z.string(),
-          nonce: z.number().int().nonnegative(),
-          label: z.string().optional(),
-        }),
+        selectedSigningKey: SelectedSigningKeySchema,
         signingMessage: z.string(),
       }),
     },
@@ -142,13 +144,7 @@ export function registerKeyGenTools(deps: KeyGenToolsDeps): void {
       }),
       outputSchema: z.object({
         message: z.string(),
-        selectedSigningKey: z.object({
-          id: z.string(),
-          kind: z.literal("EdDSA"),
-          value: z.string(),
-          nonce: z.number().int().nonnegative(),
-          label: z.string().optional(),
-        }),
+        selectedSigningKey: SelectedSigningKeySchema,
         signingMessage: z.string(),
       }),
     },
@@ -410,6 +406,11 @@ function normalizeKeyGenResult(
   return {
     requestid: asString(pick(src, ["requestid", "RequestId", "id"]), `${context}.requestid`, toMcpApiError),
     pubkeyhex: asOptionalString(pick(src, ["pubkeyhex", "PubKeyHex"])) as z.infer<typeof PubKeySchema> | undefined,
+    ethereumaddress: asOptionalString(pick(src, ["ethereumaddress", "EthereumAddress"])) as z.infer<typeof ECDSAAddressSchema> | undefined,
+    solanaaddress: asOptionalString(pick(src, ["solanaaddress", "SolanaAddress"])),
+    sorobanaddress: asOptionalString(pick(src, ["sorobanaddress", "SorobanAddress"])),
+    nearaddress: asOptionalString(pick(src, ["nearaddress", "NearAddress"])),
+    tonaddress: asOptionalString(pick(src, ["tonaddress", "TonAddress"])),
     keylist: asOptionalStringArray(pick(src, ["keylist", "KeyList"])) as z.infer<typeof NodeIdSchema>[] | undefined,
     groupid: asOptionalString(pick(src, ["groupid", "GroupId"])) as GroupId | undefined,
     gate: (() => {
@@ -419,6 +420,7 @@ function normalizeKeyGenResult(
     keytype: asOptionalString(pick(src, ["keytype", "KeyType"])) as Key | undefined,
     msgcheck: asOptionalString(pick(src, ["msgcheck", "MsgCheck"])) as MsgCheck | undefined,
     savedata: asOptionalString(pick(src, ["savedata", "SaveData"])),
+    globalnonce: asOptionalNumber(pick(src, ["globalnonce", "GlobalNonce"])),
     timepoint: asString(pick(src, ["timepoint", "Timepoint"]), `${context}.timepoint`, toMcpApiError),
     status: asOptionalString(pick(src, ["status"])),
   }

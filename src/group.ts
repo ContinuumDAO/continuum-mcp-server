@@ -9,7 +9,7 @@ import {
   GroupRequestIdSchema,
   ManagementSigSchema,
   NodeIdSchema,
-  NonceSchema,
+  SelectedSigningKeySchema,
   type Filter,
   type GroupId,
   type GroupRequest,
@@ -112,13 +112,7 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
       }),
       outputSchema: z.object({
         message: z.string(),
-        selectedSigningKey: z.object({
-          id: z.string(),
-          kind: z.literal("EdDSA"),
-          value: z.string(),
-          nonce: NonceSchema,
-          label: z.string().optional(),
-        }),
+        selectedSigningKey: SelectedSigningKeySchema,
         signingMessage: z.string(),
       }),
     },
@@ -162,13 +156,7 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
       }),
       outputSchema: z.object({
         groupRequestId: GroupRequestIdSchema,
-        selectedSigningKey: z.object({
-          id: z.string(),
-          kind: z.literal("EdDSA"),
-          value: z.string(),
-          nonce: NonceSchema,
-          label: z.string().optional(),
-        }),
+        selectedSigningKey: SelectedSigningKeySchema,
         signingMessage: z.string(),
       }),
     },
