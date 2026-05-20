@@ -5,18 +5,27 @@
   "main": "index.js",
   "scripts": {
     "build": "tsc && chmod 755 build/index.js",
+    "start": "node build/index.js",
     "test:tool:list-available-node-ids": "node scripts/mcp-test/list_available_node_ids.js",
     "test:tool:list-valid-group-node-sets": "node scripts/mcp-test/list_valid_group_node_sets.js",
     "test:tool:has-eddsa-management-key": "node scripts/mcp-test/has_eddsa_management_key.js",
     "test:tool:list-management-keys": "node scripts/mcp-test/list_management_keys.js",
-    "test:tool:build-signed-request-plan": "node scripts/mcp-test/build_signed_request_plan.js",
-    "test:tool:sign-management-message": "node scripts/mcp-test/sign_management_message.js",
     "test:tool:create-group-request": "node scripts/mcp-test/create_group_request.js",
     "test:resources": "node scripts/mcp-test/resources.js",
     "keys:list-local": "node scripts/list-local-management-keys.js",
     "sign-json-with-key": "node scripts/sign-json-with-key.js",
     "test:tool:list-group-requests": "node scripts/mcp-test/list_group_requests.js",
-    "test:tool:get-group-request-by-id": "node scripts/mcp-test/get_group_request_by_id.js"
+    "test:tool:get-group-request-by-id": "node scripts/mcp-test/get_group_request_by_id.js",
+    "test:tool:get-address-book-registry": "node scripts/mcp-test/registry/get_address_book_registry.js",
+    "test:tool:add-to-address-book-registry": "node scripts/mcp-test/registry/add_to_address_book_registry.js",
+    "test:tool:remove-from-address-book-registry": "node scripts/mcp-test/registry/remove_from_address_book_registry.js",
+    "test:tool:address-book-registry-flow": "node scripts/mcp-test/registry/address_book_flow.js",
+    "test:tool:get-token-registry": "node scripts/mcp-test/registry/get_token_registry.js",
+    "test:tool:add-to-token-registry": "node scripts/mcp-test/registry/add_to_token_registry.js",
+    "test:tool:remove-from-token-registry": "node scripts/mcp-test/registry/remove_from_token_registry.js",
+    "test:tool:get-chain-registry": "node scripts/mcp-test/registry/get_chain_registry.js",
+    "test:tool:add-to-chain-registry": "node scripts/mcp-test/registry/add_to_chain_registry.js",
+    "test:tool:remove-from-chain-registry": "node scripts/mcp-test/registry/remove_from_chain_registry.js"
   },
   "files": [
     "build"
@@ -26,11 +35,13 @@
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
+    "@types/express": "^5.0.0",
     "@types/node": "^25.6.0",
     "typescript": "^6.0.3"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "express": "^5.2.1",
     "ethers": "^6.16.0",
     "zod": "^3.25.76"
   }

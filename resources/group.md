@@ -52,13 +52,7 @@ A valid group must include your node and at least one peer. Group creation is un
 
 ## Signing behavior
 
-`create_group_request` and `accept_group_request` use the same signing model:
-
-- resolve signer from preferred signer (or fallback local allowed signer)
-- use signer's current nonce
-- build canonical body with `nodeKey`, `Nonce`, `Sig: ""`
-- sign message with local EdDSA private key
-- submit signed body to management API
+`create_group_request` and `accept_group_request` sign and submit internally. Clients only pass business arguments (e.g. `nodeIds`, `requestId`). Do not use separate signing or request-plan tools.
 
 ## Notes for MCP clients
 

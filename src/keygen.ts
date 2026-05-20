@@ -17,18 +17,15 @@ import {
   type Sig,
   type Key,
 } from "./types.js"
+import {
+  prepareSignedManagementRequest,
+  SIGNED_ROUTE_TOOL_NOTE,
+  type ManagementKeyOption,
+} from "./management-signing-flow.js"
 
 type QueryParamValue = string | number | boolean | null | undefined
 type QueryParams = Record<string, QueryParamValue>
 type RequestTarget = { host?: string; port?: string | number }
-
-type ManagementKeyOption = {
-  id: string
-  kind: "EdDSA"
-  value: string
-  nonce: Nonce
-  label?: string
-}
 
 type KeyGenToolsDeps = {
   server: McpServer
@@ -87,7 +84,7 @@ export function registerKeyGenTools(deps: KeyGenToolsDeps): void {
   server.registerTool(
     "create_mpc_keygen_request",
     {
-      description: "Initiate a request to members of a given Group ID to generate a new MPC key pair. KeyGen is created only after ALL requested group members agree; originator is auto-agreed on creation. Gate applies later to MPC sign requests only.",
+      description: `Initiate a request to members of a given Group ID to generate a new MPC key pair. KeyGen is created only after ALL requested group members agree; originator is auto-agreed on creation. Gate applies later to MPC sign requests only.${SIGNED_ROUTE_TOOL_NOTE}`,
       inputSchema: z.object({
         groupId: GroupIdSchema,
         gate: z.number().int().min(2),
@@ -111,22 +108,25 @@ export function registerKeyGenTools(deps: KeyGenToolsDeps): void {
       msgCheck: MsgCheck
       keyType: Key
     }): Promise<CallToolResult> => {
-      const keyOptions = await fetchManagementKeyOptions()
-      const selectedSigningKey = await resolveManagementSigningKeyOption(keyOptions)
       const nodeKey = await mgtGET<string>("/getNodeKey")
-      const unsignedBody = {
-        nodeKey,
-        Nonce: selectedSigningKey.nonce,
-        Sig: "",
-        clientPk: selectedSigningKey.value,
-        threshold: gate - 1,
-        groupId,
-        msgCheck,
-        keyType,
-      }
-      const signingMessage = buildManagementSigningMessage(unsignedBody)
-      const signature = await signManagementMessage(selectedSigningKey, signingMessage)
-      const body = { ...unsignedBody, Sig: signature }
+      const { selectedSigningKey, signingMessage, body } = await prepareSignedManagementRequest(
+        {
+          fetchManagementKeyOptions,
+          resolveManagementSigningKeyOption,
+          buildManagementSigningMessage,
+          signManagementMessage,
+        },
+        ({ selectedSigningKey }) => ({
+          nodeKey,
+          Nonce: selectedSigningKey.nonce,
+          Sig: "",
+          clientPk: selectedSigningKey.value,
+          threshold: gate - 1,
+          groupId,
+          msgCheck,
+          keyType,
+        }),
+      )
       const requestId = await mgtPOST<KeyGenId>("/keyGenRequest", body)
       return {
         content: [{ type: "text", text: JSON.stringify({ requestId, selectedSigningKey, signingMessage }) }],
@@ -138,7 +138,7 @@ export function registerKeyGenTools(deps: KeyGenToolsDeps): void {
   server.registerTool(
     "accept_mpc_keygen_request",
     {
-      description: "Accept a request from another member of a common Group ID to generate a new MPC key pair. Used by non-originator members. All requested members must agree for KeyGen creation to succeed.",
+      description: `Accept a request from another member of a common Group ID to generate a new MPC key pair. Used by non-originator members. All requested members must agree for KeyGen creation to succeed.${SIGNED_ROUTE_TOOL_NOTE}`,
       inputSchema: z.object({
         requestId: KeyGenIdSchema,
       }),
@@ -155,19 +155,22 @@ export function registerKeyGenTools(deps: KeyGenToolsDeps): void {
         throw toMcpApiError("KeyGen request is not pending; only pending requests can be agreed", { requestId, status })
       }
 
-      const keyOptions = await fetchManagementKeyOptions()
-      const selectedSigningKey = await resolveManagementSigningKeyOption(keyOptions)
       const nodeKey = await mgtGET<string>("/getNodeKey")
-      const unsignedBody = {
-        nodeKey,
-        Nonce: selectedSigningKey.nonce,
-        Sig: "",
-        clientPk: selectedSigningKey.value,
-        requestId,
-      }
-      const signingMessage = buildManagementSigningMessage(unsignedBody)
-      const signature = await signManagementMessage(selectedSigningKey, signingMessage)
-      const body = { ...unsignedBody, Sig: signature }
+      const { selectedSigningKey, signingMessage, body } = await prepareSignedManagementRequest(
+        {
+          fetchManagementKeyOptions,
+          resolveManagementSigningKeyOption,
+          buildManagementSigningMessage,
+          signManagementMessage,
+        },
+        ({ selectedSigningKey }) => ({
+          nodeKey,
+          Nonce: selectedSigningKey.nonce,
+          Sig: "",
+          clientPk: selectedSigningKey.value,
+          requestId,
+        }),
+      )
       const message = await mgtPOST<string>("/keyGenRequestAgree", body)
       return {
         content: [{ type: "text", text: JSON.stringify({ message, selectedSigningKey, signingMessage }) }],

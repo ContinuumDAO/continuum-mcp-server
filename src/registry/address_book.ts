@@ -14,21 +14,18 @@ import {
   SelectedSigningKeySchema,
   type GetKnownAddressesData,
   type GetKnownAddressesQuery,
-  type Nonce,
   type Sig,
 } from "../types.js"
+import {
+  buildClientSigManagementPostBody,
+  prepareSignedManagementRequest,
+  SIGNED_ROUTE_TOOL_NOTE,
+  type ManagementKeyOption,
+} from "../management-signing-flow.js"
 
 type QueryParamValue = string | number | boolean | null | undefined
 type QueryParams = Record<string, QueryParamValue>
 type RequestTarget = { host?: string; port?: string | number }
-
-type ManagementKeyOption = {
-  id: string
-  kind: "EdDSA"
-  value: string
-  nonce: Nonce
-  label?: string
-}
 
 type AddressBookToolsDeps = {
   server: McpServer
@@ -56,9 +53,9 @@ export function registerAddressBookTools(deps: AddressBookToolsDeps): void {
   server.registerTool(
     "add_to_address_book_registry",
     {
-      description: "Add or update a known address (EOA or contract) in the local address book. This allows trusted addresses to be referenced later in transactions.",
+      description: `Add or update a known address (EOA or contract) in the local address book.${SIGNED_ROUTE_TOOL_NOTE}`,
       inputSchema: z.object({
-        chainType: z.string().min(1).describe("The type of address; e.g. 'ethereum', 'solana', 'bitcoin'."),
+        chainType: z.string().min(1).describe("The format of address; e.g. 'ethereum', 'solana', 'bitcoin'."),
         address: z.string().min(1),
         name: z.string().optional().describe("Label associated with this address."),
         chainIds: z.array(z.string()).optional(),
@@ -83,28 +80,37 @@ export function registerAddressBookTools(deps: AddressBookToolsDeps): void {
       chainIds?: string[]
       isContract?: boolean
     }): Promise<CallToolResult> => {
-      const keyOptions = await fetchManagementKeyOptions()
-      const selectedSigningKey = await resolveManagementSigningKeyOption(keyOptions)
       const nodeKey = await mgtGET<string>("/getNodeKey")
-      const unsignedBody: Record<string, unknown> = {
-        nodeKey,
-        Nonce: selectedSigningKey.nonce,
-        Sig: "",
-        clientPk: selectedSigningKey.value,
-        chainType: chainType.trim().toLowerCase(),
-        address: normalizeKnownAddressForChain(chainType, address),
-      }
-      if (name !== undefined && name.length > 0) {
-        unsignedBody.name = name
-      }
-      unsignedBody.chainIds = chainIds ?? []
-      if (isContract !== undefined) {
-        unsignedBody.isContract = isContract
-      }
-      const signingMessage = buildManagementSigningMessage(unsignedBody)
-      const signature = await signManagementMessage(selectedSigningKey, signingMessage)
-      const body = { ...unsignedBody, Sig: signature }
-      const message = await mgtPOST<string>(ADDRESS_BOOK_REGISTRY_API_PATHS.add_to_address_book_registry, body)
+      const { selectedSigningKey, signingMessage, signature, unsignedBody } =
+        await prepareSignedManagementRequest(
+          {
+            fetchManagementKeyOptions,
+            resolveManagementSigningKeyOption,
+            buildManagementSigningMessage,
+            signManagementMessage,
+          },
+          ({ selectedSigningKey }) => {
+            const body: Record<string, unknown> = {
+              nodeKey,
+              Nonce: selectedSigningKey.nonce,
+              Sig: "",
+              clientPk: selectedSigningKey.value,
+              chainType: chainType.trim().toLowerCase(),
+              address: normalizeKnownAddressForChain(chainType, address),
+            }
+            if (name !== undefined && name.length > 0) {
+              body.name = name
+            }
+            body.chainIds = chainIds ?? []
+            if (isContract !== undefined) {
+              body.isContract = isContract
+            }
+            return body
+          },
+        )
+      // /addKnownAddress expects signedMessage + clientSig (not Sig on the POST body).
+      const postBody = buildClientSigManagementPostBody(unsignedBody, signingMessage, signature)
+      const message = await mgtPOST<string>(ADDRESS_BOOK_REGISTRY_API_PATHS.add_to_address_book_registry, postBody)
       return {
         content: [{ type: "text", text: JSON.stringify({ message, selectedSigningKey, signingMessage }) }],
         structuredContent: { message, selectedSigningKey, signingMessage },
@@ -115,7 +121,7 @@ export function registerAddressBookTools(deps: AddressBookToolsDeps): void {
   server.registerTool(
     "remove_from_address_book_registry",
     {
-      description: "Remove a known address from the local address book for a chain type. Uses preferred signer (or first locally-usable allowed signer) with canonical management signing.",
+      description: `Remove a known address from the local address book for a chain type.${SIGNED_ROUTE_TOOL_NOTE}`,
       inputSchema: z.object({
         chainType: z.string().min(1),
         address: z.string().min(1),
@@ -133,21 +139,26 @@ export function registerAddressBookTools(deps: AddressBookToolsDeps): void {
       chainType: string
       address: string
     }): Promise<CallToolResult> => {
-      const keyOptions = await fetchManagementKeyOptions()
-      const selectedSigningKey = await resolveManagementSigningKeyOption(keyOptions)
       const nodeKey = await mgtGET<string>("/getNodeKey")
-      const unsignedBody = {
-        nodeKey,
-        Nonce: selectedSigningKey.nonce,
-        Sig: "",
-        clientPk: selectedSigningKey.value,
-        chainType: chainType.trim().toLowerCase(),
-        address: normalizeKnownAddressForChain(chainType, address),
-      }
-      const signingMessage = buildManagementSigningMessage(unsignedBody)
-      const signature = await signManagementMessage(selectedSigningKey, signingMessage)
-      const body = { ...unsignedBody, Sig: signature }
-      const message = await mgtPOST<string>(ADDRESS_BOOK_REGISTRY_API_PATHS.remove_from_address_book_registry, body)
+      const { selectedSigningKey, signingMessage, signature, unsignedBody } =
+        await prepareSignedManagementRequest(
+          {
+            fetchManagementKeyOptions,
+            resolveManagementSigningKeyOption,
+            buildManagementSigningMessage,
+            signManagementMessage,
+          },
+          ({ selectedSigningKey }) => ({
+            nodeKey,
+            Nonce: selectedSigningKey.nonce,
+            Sig: "",
+            clientPk: selectedSigningKey.value,
+            chainType: chainType.trim().toLowerCase(),
+            address: normalizeKnownAddressForChain(chainType, address),
+          }),
+        )
+      const postBody = buildClientSigManagementPostBody(unsignedBody, signingMessage, signature)
+      const message = await mgtPOST<string>(ADDRESS_BOOK_REGISTRY_API_PATHS.remove_from_address_book_registry, postBody)
       return {
         content: [{ type: "text", text: JSON.stringify({ message, selectedSigningKey, signingMessage }) }],
         structuredContent: { message, selectedSigningKey, signingMessage },

@@ -194,8 +194,113 @@ export const KnownAddressEntrySchema = z.object({
   updatedAt: z.string(),
 })
 
-/** `GET /getKnownAddresses` success `data`: chain type → list of entries. */
-export const GetKnownAddressesDataSchema = z.record(z.string(), z.array(KnownAddressEntrySchema))
+/**
+ * `GET /getKnownAddresses` success `data`: chain type → list of entries.
+ * Uses catchall object (not z.record) so MCP SDK output validation accepts it as an object schema.
+ */
+export const GetKnownAddressesDataSchema = z.object({}).catchall(z.array(KnownAddressEntrySchema))
+
+/** Supported token standards for local token registry (per API). */
+export const tokenTypeValues = ["ERC20", "ERC721", "CTMERC20", "CTMRWA1"] as const
+export type TokenType = (typeof tokenTypeValues)[number]
+export const TokenTypeSchema = z.enum(tokenTypeValues)
+
+/** Management HTTP paths for local token registry operations. */
+export const TOKEN_REGISTRY_API_PATHS = {
+  add_to_token_registry: "/addToken",
+  remove_from_token_registry: "/removeToken",
+  get_token_registry: "/getTokens",
+} as const
+
+export type TokenRegistryOperationId = keyof typeof TOKEN_REGISTRY_API_PATHS
+
+/** `GET /getTokens` query parameters. */
+export const GetTokenRegistryQuerySchema = z.object({
+  chainType: z.string().min(1).optional(),
+  chain_id: z.string().min(1).optional(),
+})
+
+/** Contract object for `POST /addToken` (fields vary by tokenType). */
+export const TokenContractInputSchema = z
+  .object({
+    contractAddress: z.string().min(1),
+    name: z.string().optional(),
+    symbol: z.string().optional(),
+    symbolURL: z.string().optional(),
+    decimals: z.number().int().nonnegative().optional(),
+    tokenURI: z.string().optional(),
+    tokenId: z.string().optional(),
+  })
+  .passthrough()
+
+const TokenRegistryContractSchema = z.object({
+  contractAddress: z.string(),
+}).passthrough()
+
+const TokenRegistryTypeBucketSchema = z
+  .object({
+    contracts: z.array(TokenRegistryContractSchema).optional(),
+  })
+  .passthrough()
+
+/** One chain's token config: `chainId` plus dynamic token-type keys (ERC20, ERC721, …). */
+export const TokenRegistryChainConfigSchema = z
+  .object({
+    chainId: z.string(),
+  })
+  .catchall(z.union([TokenRegistryTypeBucketSchema, z.string()]))
+
+/**
+ * `GET /getTokens` success `data`: chain type → list of per-chainId configs.
+ * Uses catchall so MCP SDK output validation accepts the object schema.
+ */
+export const GetTokenRegistryDataSchema = z.object({}).catchall(z.array(TokenRegistryChainConfigSchema))
+
+/** Default Get Sig fee tier for stored chain configs. */
+export const defaultGetSigFeeSpeedValues = ["slow", "normal", "fast"] as const
+export type DefaultGetSigFeeSpeed = (typeof defaultGetSigFeeSpeedValues)[number]
+export const DefaultGetSigFeeSpeedSchema = z.enum(defaultGetSigFeeSpeedValues)
+
+/** Management HTTP paths for local chain (network) registry operations. */
+export const CHAIN_REGISTRY_API_PATHS = {
+  add_to_chain_registry: "/postChainDetails",
+  remove_from_chain_registry: "/removeChainDetails",
+  get_chain_registry: "/getChainDetails",
+} as const
+
+export type ChainRegistryOperationId = keyof typeof CHAIN_REGISTRY_API_PATHS
+
+/** `GET /getChainDetails` query parameters. */
+export const GetChainRegistryQuerySchema = z.object({
+  chain_id: z.string().min(1).optional(),
+})
+
+/** One stored chain config (`GET /getChainDetails` item). */
+export const ChainRegistryEntrySchema = z.object({
+  chainId: z.string(),
+  chainName: z.string(),
+  rpcGateway: z.string(),
+  explorer: z.string().optional(),
+  legacy: z.boolean(),
+  testnet: z.boolean(),
+  gasName: z.string().optional(),
+  gasLimit: z.number().optional(),
+  baseFee: z.number().nullable().optional(),
+  priorityFee: z.number().nullable().optional(),
+  baseFeeMultiplier: z.number().optional(),
+  gasMultiplier: z.number().optional(),
+  gasPrice: z.number().optional(),
+  defaultGetSigFeeSpeed: DefaultGetSigFeeSpeedSchema.optional(),
+  updatedAt: z.string().optional(),
+})
+
+/**
+ * Normalized `GET /getChainDetails` tool output (API returns one object or an array).
+ * Wrapped as `{ chains }` so MCP SDK output validation accepts an object schema.
+ */
+export const GetChainRegistryDataSchema = z.object({
+  chains: z.array(ChainRegistryEntrySchema),
+})
 
 export type Logs = z.infer<typeof LogsSchema>
 export type MachineInfo = z.infer<typeof MachineInfoSchema>
@@ -225,6 +330,12 @@ export type ConfiguredNode = z.infer<typeof ConfiguredNodeSchema>
 export type KnownAddressEntry = z.infer<typeof KnownAddressEntrySchema>
 export type GetKnownAddressesData = z.infer<typeof GetKnownAddressesDataSchema>
 export type GetKnownAddressesQuery = z.infer<typeof GetKnownAddressesQuerySchema>
+export type TokenContractInput = z.infer<typeof TokenContractInputSchema>
+export type GetTokenRegistryData = z.infer<typeof GetTokenRegistryDataSchema>
+export type GetTokenRegistryQuery = z.infer<typeof GetTokenRegistryQuerySchema>
+export type ChainRegistryEntry = z.infer<typeof ChainRegistryEntrySchema>
+export type GetChainRegistryData = z.infer<typeof GetChainRegistryDataSchema>
+export type GetChainRegistryQuery = z.infer<typeof GetChainRegistryQuerySchema>
 export type MessageToSignResponse = z.infer<typeof MessageToSignResponseSchema>
 export type MqttKey = z.infer<typeof MqttKeySchema>
 export type ConfigUpdatePlanResponse = z.infer<typeof ConfigUpdatePlanResponseSchema>

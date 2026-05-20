@@ -6,23 +6,19 @@ import { generateKeyPairSync } from "crypto"
 import { z } from "zod"
 import {
   EdDSAPubKeySchema,
-  ManagementSigSchema,
   NodeIdSchema,
   NonceSchema,
-  SelectedSigningKeySchema,
   type EdDSAPubKey,
   type NodeId,
   type Nonce,
   type Sig,
 } from "./types.js"
-
-type ManagementKeyOption = {
-  id: string
-  kind: "EdDSA"
-  value: string
-  nonce: Nonce
-  label?: string
-}
+import {
+  buildClientSigManagementPostBody,
+  prepareSignedManagementRequest,
+  SIGNED_ROUTE_TOOL_NOTE,
+  type ManagementKeyOption,
+} from "./management-signing-flow.js"
 
 type LocalManagementKeyEntry = {
   fileName: string
@@ -203,7 +199,7 @@ export function registerKeyTools(deps: KeyToolsDeps): void {
   server.registerTool(
     "add_eddsa_management_key",
     {
-      description: "Add a new Ed25519 public key to allowed management keys via /addManagementKey, signed by preferred signer (or first locally-usable allowed signer).",
+      description: `Add a new Ed25519 public key to allowed management keys via /addManagementKey.${SIGNED_ROUTE_TOOL_NOTE}`,
       inputSchema: z.object({
         newPublicKey: z.string(),
       }),
@@ -222,26 +218,30 @@ export function registerKeyTools(deps: KeyToolsDeps): void {
       await assertAgentCanSignManagementRequests()
 
       const normalizedNewPublicKey = normalizeEd25519PublicKeyToHex(newPublicKey) as EdDSAPubKey
-      const nodeKey = await getNodeKey()
-      const keyOptions = await fetchManagementKeyOptions()
-      const selectedSigningKey = await resolveManagementSigningKeyOption(keyOptions)
-      if (normalizeEd25519PublicKeyToHex(selectedSigningKey.value) === normalizedNewPublicKey) {
-        throw toMcpApiError(
-          "Signer key cannot be the newly created key being added. Use an existing already-authorized EdDSA signer key.",
-          { signerPublicKey: selectedSigningKey.value, newPublicKey: normalizedNewPublicKey },
-        )
-      }
-
-      const unsignedBody = { newPublicKey: normalizedNewPublicKey, nodeKey, Nonce: selectedSigningKey.nonce, Sig: "" }
-      const signingMessage = buildManagementSigningMessage(unsignedBody)
-      const signature = await signManagementMessage(selectedSigningKey, signingMessage)
-      const body = { ...unsignedBody, Sig: signature }
+      const { selectedSigningKey, body } = await prepareSignedManagementRequest(
+        {
+          fetchManagementKeyOptions,
+          resolveManagementSigningKeyOption,
+          buildManagementSigningMessage,
+          signManagementMessage,
+        },
+        async ({ selectedSigningKey }) => {
+          if (normalizeEd25519PublicKeyToHex(selectedSigningKey.value) === normalizedNewPublicKey) {
+            throw toMcpApiError(
+              "Signer key cannot be the newly created key being added. Use an existing already-authorized EdDSA signer key.",
+              { signerPublicKey: selectedSigningKey.value, newPublicKey: normalizedNewPublicKey },
+            )
+          }
+          const nodeKey = await getNodeKey()
+          return { newPublicKey: normalizedNewPublicKey, nodeKey, Nonce: selectedSigningKey.nonce, Sig: "" }
+        },
+      )
       await mgtPOST<null>("/addManagementKey", body)
 
       const structuredContent = {
         success: true,
         publicKey: normalizedNewPublicKey,
-        nodeKey,
+        nodeKey: body.nodeKey as NodeId,
         message: "Added Ed25519 management key successfully.",
       }
 
@@ -255,7 +255,7 @@ export function registerKeyTools(deps: KeyToolsDeps): void {
   server.registerTool(
     "set_preferred_management_key",
     {
-      description: "Set the preferred Ed25519 management signer. Input only the target publicKeyHex. This tool signs in-route: if a preferred signer is already set and usable, it is used; otherwise the server automatically falls back to the first allowed management key that has a usable local private key. It then verifies the requested preferred key exists locally with matching private key before calling /setPreferredSigner.",
+      description: `Set the preferred Ed25519 management signer (input: target publicKeyHex only). Verifies the key is allowed and has a matching local keypair before calling /setPreferredSigner.${SIGNED_ROUTE_TOOL_NOTE}`,
       inputSchema: z.object({
         publicKeyHex: z.string(),
       }),
@@ -279,25 +279,23 @@ export function registerKeyTools(deps: KeyToolsDeps): void {
         throw toMcpApiError("Preferred signer must already be in allowed management keys", { publicKeyHex: normalized })
       }
       const localMatch = await ensureLocalKeyPairForPublicKey(normalized)
-      const selectedSigningKey = await resolveManagementSigningKeyOption(keyOptions)
       const nodeKey = await getNodeKey()
-      const unsignedBody = {
-        nodeKey,
-        Nonce: selectedSigningKey.nonce,
-        publicKey: normalized,
-        Sig: "",
-      }
-      const signedMessage = buildManagementSigningMessage(unsignedBody)
-      const clientSig = await signManagementMessage(selectedSigningKey, signedMessage)
-      // /setPreferredSigner validates SetPreferredSignerPost: requires signedMessage + clientSig (not Sig).
-      // Field names for nodeKey/Nonce/publicKey should match the canonical JSON inside signedMessage.
-      const body = {
-        nodeKey,
-        Nonce: selectedSigningKey.nonce,
-        publicKey: normalized,
-        signedMessage,
-        clientSig,
-      }
+      const { selectedSigningKey, signingMessage: signedMessage, signature: clientSig, unsignedBody } =
+        await prepareSignedManagementRequest(
+          {
+            fetchManagementKeyOptions,
+            resolveManagementSigningKeyOption,
+            buildManagementSigningMessage,
+            signManagementMessage,
+          },
+          ({ selectedSigningKey }) => ({
+            nodeKey,
+            Nonce: selectedSigningKey.nonce,
+            publicKey: normalized,
+            Sig: "",
+          }),
+        )
+      const body = buildClientSigManagementPostBody(unsignedBody, signedMessage, clientSig)
       const apiMessage = await mgtPOST<string>("/setPreferredSigner", body)
       const structuredContent = {
         success: true,
@@ -331,66 +329,6 @@ export function registerKeyTools(deps: KeyToolsDeps): void {
       return {
         content: [{ type: "text", text: JSON.stringify(structuredContent) }],
         structuredContent,
-      }
-    },
-  )
-
-  server.registerTool(
-    "build_signed_request_plan",
-    {
-      description: "Management signing helper: build canonical unsigned body and messageToSign using preferred signer (or first locally-usable allowed signer).",
-      inputSchema: z.object({
-        action: z.string(),
-        payload: z.record(z.string(), z.unknown()),
-      }),
-      outputSchema: z.object({
-        action: z.string(),
-        selectedSigningKey: SelectedSigningKeySchema,
-        unsignedBody: z.record(z.string(), z.unknown()),
-        nodeKey: NodeIdSchema,
-        messageToSign: z.string(),
-      }),
-    },
-    async ({ action, payload }: {
-      action: string
-      payload: Record<string, unknown>
-    }): Promise<CallToolResult> => {
-      const keys = await fetchManagementKeyOptions()
-      const selectedSigningKey = await resolveManagementSigningKeyOption(keys)
-      const nodeKey = await getNodeKey()
-      const unsignedBody = {
-        ...payload,
-        nodeKey,
-        Nonce: selectedSigningKey.nonce,
-        Sig: "",
-      }
-      const messageToSign = buildManagementSigningMessage(unsignedBody)
-      return {
-        content: [{ type: "text", text: JSON.stringify({ action, selectedSigningKey, nodeKey, unsignedBody, messageToSign }) }],
-        structuredContent: { action, selectedSigningKey, nodeKey, unsignedBody, messageToSign },
-      }
-    },
-  )
-
-  server.registerTool(
-    "sign_management_message",
-    {
-      description: "Management signing helper: sign a canonical message using preferred signer (or first locally-usable allowed signer).",
-      inputSchema: z.object({
-        message: z.string(),
-      }),
-      outputSchema: z.object({
-        signerPublicKey: z.string(),
-        signature: ManagementSigSchema,
-      }),
-    },
-    async ({ message }: { message: string }): Promise<CallToolResult> => {
-      const keys = await fetchManagementKeyOptions()
-      const selectedSigningKey = await resolveManagementSigningKeyOption(keys)
-      const signature = await signManagementMessage(selectedSigningKey, message)
-      return {
-        content: [{ type: "text", text: JSON.stringify({ signerPublicKey: selectedSigningKey.value, signature }) }],
-        structuredContent: { signerPublicKey: selectedSigningKey.value, signature },
       }
     },
   )

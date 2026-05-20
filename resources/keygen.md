@@ -51,13 +51,7 @@ That key can later be used in signing workflows.
 
 ## Signing behavior
 
-Both create and accept tools use the same management signing pattern:
-
-- resolve signer from preferred signer (or fallback local allowed signer)
-- use signer nonce
-- build canonical body (`nodeKey`, `Nonce`, `Sig: ""`)
-- sign canonical message
-- submit signed request
+`create_mpc_keygen_request` and `accept_mpc_keygen_request` sign and submit internally. Pass `groupId` / gate / key type or `requestId` only; do not orchestrate signing manually.
 
 ## Status expectations
 

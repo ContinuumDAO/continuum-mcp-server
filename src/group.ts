@@ -19,18 +19,15 @@ import {
   type Nonce,
   type Sig,
 } from "./types.js"
+import {
+  prepareSignedManagementRequest,
+  SIGNED_ROUTE_TOOL_NOTE,
+  type ManagementKeyOption,
+} from "./management-signing-flow.js"
 
 type QueryParamValue = string | number | boolean | null | undefined
 type QueryParams = Record<string, QueryParamValue>
 type RequestTarget = { host?: string; port?: string | number }
-
-type ManagementKeyOption = {
-  id: string
-  kind: "EdDSA"
-  value: string
-  nonce: Nonce
-  label?: string
-}
 
 type GroupToolsDeps = {
   server: McpServer
@@ -106,7 +103,7 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
   server.registerTool(
     "accept_group_request",
     {
-      description: "Agree to a pending incoming group request by request ID using preferred signer (or first locally-usable allowed signer). Used by non-originator requested nodes; originator auto-agrees at request creation. A group is formed only after ALL requested nodes agree.",
+      description: `Agree to a pending incoming group request by request ID. Used by non-originator requested nodes; originator auto-agrees at request creation. A group is formed only after ALL requested nodes agree.${SIGNED_ROUTE_TOOL_NOTE}`,
       inputSchema: z.object({
         requestId: GroupRequestIdSchema,
       }),
@@ -126,18 +123,21 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
         })
       }
 
-      const keyOptions = await fetchManagementKeyOptions()
-      const selectedSigningKey = await resolveManagementSigningKeyOption(keyOptions)
       const nodeKey = await mgtGET<NodeId>("/getNodeKey")
-      const unsignedBody = {
-        nodeKey,
-        requestId,
-        Nonce: selectedSigningKey.nonce,
-        Sig: "",
-      }
-      const signingMessage = buildManagementSigningMessage(unsignedBody)
-      const signature = await signManagementMessage(selectedSigningKey, signingMessage)
-      const body = { ...unsignedBody, Sig: signature }
+      const { selectedSigningKey, signingMessage, body } = await prepareSignedManagementRequest(
+        {
+          fetchManagementKeyOptions,
+          resolveManagementSigningKeyOption,
+          buildManagementSigningMessage,
+          signManagementMessage,
+        },
+        ({ selectedSigningKey }) => ({
+          nodeKey,
+          requestId,
+          Nonce: selectedSigningKey.nonce,
+          Sig: "",
+        }),
+      )
       const output = await mgtPOST<string>("/newGroupRequestAgree", body)
 
       return {
@@ -150,7 +150,7 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
   server.registerTool(
     "create_group_request",
     {
-      description: "Create a new MPC group request from explicit node IDs. Group creation requires unanimous agreement from ALL requested nodes; originator is auto-agreed on creation. Uses preferred signer (or first locally-usable allowed signer). Use list_available_node_ids/list_valid_group_node_sets first; nodeIds must include your node, be from configured nodes, min 2, and not already exist.",
+      description: `Create a new MPC group request from explicit node IDs. Group creation requires unanimous agreement from ALL requested nodes; originator is auto-agreed on creation. Use list_available_node_ids/list_valid_group_node_sets first; nodeIds must include your node, be from configured nodes, min 2, and not already exist.${SIGNED_ROUTE_TOOL_NOTE}`,
       inputSchema: z.object({
         nodeIds: z.array(NodeIdSchema).min(2),
       }),
@@ -189,12 +189,16 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
         throw toMcpApiError("A group with this exact node set already exists", { keyList })
       }
 
-      const keyOptions = await fetchManagementKeyOptions()
-      const selectedSigningKey = await resolveManagementSigningKeyOption(keyOptions)
-      const unsignedBody = buildNewGroupUnsignedBody(keyList, [], selfNodeId, selectedSigningKey.nonce)
-      const signingMessage = buildManagementSigningMessage(unsignedBody)
-      const signature = await signManagementMessage(selectedSigningKey, signingMessage)
-      const body = { ...unsignedBody, Sig: signature }
+      const { selectedSigningKey, signingMessage, body } = await prepareSignedManagementRequest(
+        {
+          fetchManagementKeyOptions,
+          resolveManagementSigningKeyOption,
+          buildManagementSigningMessage,
+          signManagementMessage,
+        },
+        ({ selectedSigningKey }) =>
+          buildNewGroupUnsignedBody(keyList, [], selfNodeId, selectedSigningKey.nonce),
+      )
       const output = await mgtPOST<GroupRequestId>("/newGroupRequest", body)
       return {
         content: [{ type: "text", text: JSON.stringify({ groupRequestId: output, selectedSigningKey, signingMessage }) }],

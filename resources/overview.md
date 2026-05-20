@@ -14,7 +14,10 @@ This server helps an MCP client operate a Continuum node through safe, structure
 - Manage EdDSA management keys and signer selection (`list_management_keys`, `create_eddsa_management_keypair`, `add_eddsa_management_key`, `set_preferred_management_key`, `get_preferred_management_key`).
 - Coordinate group lifecycle (`list_available_node_ids`, `list_valid_group_node_sets`, `create_group_request`, `accept_group_request`).
 - Coordinate MPC key generation (`create_mpc_keygen_request`, `accept_mpc_keygen_request`, keygen query tools).
-- Provide signed management route tools that handle signing internally.
+- Manage the address book registry (`get_address_book_registry`, `add_to_address_book_registry`, `remove_from_address_book_registry`).
+- Manage the token registry (`get_token_registry`, `add_to_token_registry`, `remove_from_token_registry`).
+- Manage the chain registry (`get_chain_registry`, `add_to_chain_registry`, `remove_from_chain_registry`).
+- Provide signed management route tools that handle signing internally (never expose manual signing/plan steps to clients).
 
 ## Common node-operator loop
 
@@ -44,7 +47,7 @@ This server helps an MCP client operate a Continuum node through safe, structure
 - Keep user interaction simple: fetch options first, then ask for concrete selection, then execute.
 - Prefer explicit tool inputs for business data (e.g., concrete node IDs), not signer index.
 - For signed tools, rely on preferred signer (or automatic local-key fallback) rather than requesting signer selection each time.
-- Use one route tool per signed action; do not split into planning/sign helper steps.
+- Use one route tool per signed action. Do not call `build_signed_request_plan` or `sign_management_message` (not available on this server).
 - Treat tool output as source of truth; avoid guessing route payload shape.
 - Load detailed docs by topic:
   - signing: `sign.md`

@@ -12,10 +12,10 @@ Maintain usable local signer keys and keep authorized public keys in sync with t
 - `list_management_keys`
 - `create_eddsa_management_keypair`
 - `add_eddsa_management_key`
-- `set_preferred_management_key`
+- `set_preferred_management_key` (signs internally)
 - `get_preferred_management_key`
-- `build_signed_request_plan` (optional: canonical body + message for custom flows)
-- `sign_management_message` (optional: sign a canonical management message)
+
+Low-level signing helpers (`build_signed_request_plan`, `sign_management_message`) are **not** registered. Clients must use route tools that sign internally.
 
 ## Key lifecycle
 
