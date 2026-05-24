@@ -246,7 +246,7 @@ export async function listLocalManagementPublicKeys(
 }
 
 export function buildManagementSigningMessage(bodyWithEmptySig: Record<string, unknown>): string {
-  return JSON.stringify(bodyWithEmptySig)
+  return JSON.stringify({ ...bodyWithEmptySig, clientSig: "" })
 }
 
 export async function signManagementMessage(

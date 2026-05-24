@@ -14,11 +14,11 @@ import {
   type Sig,
 } from "./types.js"
 import {
-  buildClientSigManagementPostBody,
   prepareSignedManagementRequest,
   SIGNED_ROUTE_TOOL_NOTE,
   type ManagementKeyOption,
 } from "./management-signing-flow.js"
+import { buildManagementPostBody } from "./management-post-sig.js"
 
 type LocalManagementKeyEntry = {
   fileName: string
@@ -199,49 +199,43 @@ export function registerKeyTools(deps: KeyToolsDeps): void {
   server.registerTool(
     "add_eddsa_management_key",
     {
-      description: `Add a new Ed25519 public key to allowed management keys via /addManagementKey.${SIGNED_ROUTE_TOOL_NOTE}`,
-      inputSchema: z.object({
-        newPublicKey: z.string(),
-      }),
+      description: `Add a new Ed25519 management key on the node via /addManagementKey (server generates the key pair and writes files under KEY_ROOT/management_keys).${SIGNED_ROUTE_TOOL_NOTE}`,
       outputSchema: z.object({
         success: z.boolean(),
         publicKey: EdDSAPubKeySchema,
         nodeKey: NodeIdSchema,
+        keySlot: z.number().int().positive().optional(),
+        fileName: z.string().optional(),
         message: z.string(),
       }),
     },
-    async ({
-      newPublicKey,
-    }: {
-      newPublicKey: string
-    }): Promise<CallToolResult> => {
+    async (): Promise<CallToolResult> => {
       await assertAgentCanSignManagementRequests()
 
-      const normalizedNewPublicKey = normalizeEd25519PublicKeyToHex(newPublicKey) as EdDSAPubKey
-      const { selectedSigningKey, body } = await prepareSignedManagementRequest(
+      const nodeKey = await getNodeKey()
+      const { body } = await prepareSignedManagementRequest(
         {
           fetchManagementKeyOptions,
           resolveManagementSigningKeyOption,
           buildManagementSigningMessage,
           signManagementMessage,
         },
-        async ({ selectedSigningKey }) => {
-          if (normalizeEd25519PublicKeyToHex(selectedSigningKey.value) === normalizedNewPublicKey) {
-            throw toMcpApiError(
-              "Signer key cannot be the newly created key being added. Use an existing already-authorized EdDSA signer key.",
-              { signerPublicKey: selectedSigningKey.value, newPublicKey: normalizedNewPublicKey },
-            )
-          }
-          const nodeKey = await getNodeKey()
-          return { newPublicKey: normalizedNewPublicKey, nodeKey, Nonce: selectedSigningKey.nonce, Sig: "" }
-        },
+        ({ selectedSigningKey }) => buildManagementPostBody(selectedSigningKey.nonce, nodeKey),
       )
-      await mgtPOST<null>("/addManagementKey", body)
+      const raw = await mgtPOST<Record<string, unknown>>("/addManagementKey", body)
+      const addedPublicKey = typeof raw?.addedPublicKey === "string"
+        ? normalizeEd25519PublicKeyToHex(raw.addedPublicKey)
+        : undefined
+      if (!addedPublicKey) {
+        throw toMcpApiError("addManagementKey succeeded but response missing addedPublicKey", { raw })
+      }
 
       const structuredContent = {
         success: true,
-        publicKey: normalizedNewPublicKey,
-        nodeKey: body.nodeKey as NodeId,
+        publicKey: addedPublicKey as EdDSAPubKey,
+        nodeKey,
+        keySlot: typeof raw.keySlot === "number" ? raw.keySlot : undefined,
+        fileName: typeof raw.fileName === "string" ? raw.fileName : undefined,
         message: "Added Ed25519 management key successfully.",
       }
 
@@ -264,8 +258,8 @@ export function registerKeyTools(deps: KeyToolsDeps): void {
         publicKeyHex: EdDSAPubKeySchema,
         signerPublicKey: EdDSAPubKeySchema,
         nodeKey: NodeIdSchema,
-        Nonce: NonceSchema,
-        signedMessage: z.string(),
+        nonce: NonceSchema,
+        signingMessage: z.string(),
         clientSig: z.string(),
         fileName: z.string(),
         message: z.string(),
@@ -280,7 +274,7 @@ export function registerKeyTools(deps: KeyToolsDeps): void {
       }
       const localMatch = await ensureLocalKeyPairForPublicKey(normalized)
       const nodeKey = await getNodeKey()
-      const { selectedSigningKey, signingMessage: signedMessage, signature: clientSig, unsignedBody } =
+      const { selectedSigningKey, signingMessage, signature: clientSig, body } =
         await prepareSignedManagementRequest(
           {
             fetchManagementKeyOptions,
@@ -288,22 +282,17 @@ export function registerKeyTools(deps: KeyToolsDeps): void {
             buildManagementSigningMessage,
             signManagementMessage,
           },
-          ({ selectedSigningKey }) => ({
-            nodeKey,
-            Nonce: selectedSigningKey.nonce,
-            publicKey: normalized,
-            Sig: "",
-          }),
+          ({ selectedSigningKey }) =>
+            buildManagementPostBody(selectedSigningKey.nonce, nodeKey, { publicKey: normalized }),
         )
-      const body = buildClientSigManagementPostBody(unsignedBody, signedMessage, clientSig)
       const apiMessage = await mgtPOST<string>("/setPreferredSigner", body)
       const structuredContent = {
         success: true,
         publicKeyHex: normalized,
         signerPublicKey: normalizeEd25519PublicKeyToHex(selectedSigningKey.value) as EdDSAPubKey,
         nodeKey,
-        Nonce: selectedSigningKey.nonce,
-        signedMessage,
+        nonce: selectedSigningKey.nonce,
+        signingMessage,
         clientSig,
         fileName: localMatch.fileName,
         message: apiMessage || "Preferred signer stored",

@@ -17,7 +17,7 @@ If a client or model attempts to use them, restart the MCP server after upgradin
 - `set_preferred_management_key` — set default signer (signs internally)
 - `get_preferred_management_key` — read current preferred signer
 - `create_eddsa_management_keypair` — local key files only (no node authorization)
-- `add_eddsa_management_key` — authorize a new public key on the node (signs internally)
+- `add_eddsa_management_key` — authorize a new server-generated Ed25519 key on the node (signs internally)
 
 ## Signed route tools (one call each)
 
@@ -48,17 +48,17 @@ Every signed route tool uses the same server implementation:
 
 1. `fetchManagementKeyOptions`
 2. `resolveManagementSigningKeyOption`
-3. Build unsigned body (`nodeKey`, `Nonce`, `Sig: ""`, route fields; some routes include `clientPk`)
-4. `buildManagementSigningMessage` (canonical JSON)
+3. Build unsigned body with `{ nonce, clientSig: "", nodeKey }` plus route fields (`buildManagementPostBody`)
+4. `messageToSignManagementBody` — canonical JSON with `clientSig` cleared
 5. `signManagementMessage`
-6. POST to the management API
+6. POST with `clientSig` set on the same JSON body
 
-POST shape depends on the route (handled inside the server):
+**Exceptions (not the standard JSON management envelope):**
 
-- **Inline `Sig`**: group, keygen, `add_eddsa_management_key` — body includes `Sig` with the hex signature.
-- **`signedMessage` + `clientSig`**: address book add/remove, `set_preferred_management_key` — body omits `Sig`; includes the canonical JSON string and detached signature.
-- **Action JSON + `signedMessage` + `clientSig`**: token registry add/remove — signed payload uses lowercase `nonce`, string `chainId`, `action` (`addToken` / `removeToken`); contract fields are on the POST body only.
-- **Chain config JSON + `signedMessage` + `clientSig`**: chain registry add — signed payload includes `nonce`, `chainName`, `chainId`, `rpcGateway`, `legacy`, `testnet`, and optional gas/explorer fields; remove uses `action: "removeChainDetails"`.
+- `/multiSignRequest` — client signing: `{ ...bodyForSign, clientSig, signedMessage }`
+- `/configUpdateImplement` — `nodeKey` + opaque `signedMessage` hash line + `clientSig`
+- `/postMSQTTKey` — sign PEM bytes directly; body has `nodeKey`, `caCertPem`, `clientSig`
+- `/addManagementKey`, `/removeManagementKey` — Ethereum NodeMgtKey may use `signedMessage` + EIP-191 `clientSig` instead of pure Ed25519 JSON signing
 
 Clients must not replicate or split this flow.
 

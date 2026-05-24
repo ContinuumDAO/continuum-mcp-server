@@ -24,6 +24,7 @@ import {
   SIGNED_ROUTE_TOOL_NOTE,
   type ManagementKeyOption,
 } from "./management-signing-flow.js"
+import { buildManagementPostBody } from "./management-post-sig.js"
 
 type QueryParamValue = string | number | boolean | null | undefined
 type QueryParams = Record<string, QueryParamValue>
@@ -131,12 +132,8 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
           buildManagementSigningMessage,
           signManagementMessage,
         },
-        ({ selectedSigningKey }) => ({
-          nodeKey,
-          requestId,
-          Nonce: selectedSigningKey.nonce,
-          Sig: "",
-        }),
+        ({ selectedSigningKey }) =>
+          buildManagementPostBody(selectedSigningKey.nonce, nodeKey, { requestId }),
       )
       const output = await mgtPOST<string>("/newGroupRequestAgree", body)
 
@@ -415,20 +412,11 @@ export function registerGroupTools(deps: GroupToolsDeps): void {
   )
 }
 
-function buildNewGroupUnsignedBody(keyList: NodeId[], brokerArray: string[], nodeKey: NodeId, nonce: Nonce): {
-  nodeKey: NodeId
-  Nonce: Nonce
-  Sig: ""
-  keyList: NodeId[]
-  BrokerArray: string[]
-} {
-  return {
-    nodeKey,
-    Nonce: nonce,
-    Sig: "",
-    keyList,
+function buildNewGroupUnsignedBody(keyList: NodeId[], brokerArray: string[], nodeKey: NodeId, nonce: Nonce): Record<string, unknown> {
+  return buildManagementPostBody(nonce, nodeKey, {
+    KeyList: keyList,
     BrokerArray: brokerArray,
-  }
+  })
 }
 
 function normalizeNodeIdList(nodeIds: NodeId[]): NodeId[] {

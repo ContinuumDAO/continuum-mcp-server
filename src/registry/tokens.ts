@@ -21,10 +21,11 @@ import {
   type TokenType,
 } from "../types.js"
 import {
-  prepareActionSignedManagementRequest,
+  prepareSignedManagementRequest,
   SIGNED_ROUTE_TOOL_NOTE,
   type ManagementKeyOption,
 } from "../management-signing-flow.js"
+import { buildManagementPostBody } from "../management-post-sig.js"
 
 type QueryParamValue = string | number | boolean | null | undefined
 type QueryParams = Record<string, QueryParamValue>
@@ -94,37 +95,29 @@ export function registerTokenRegistryTools(deps: TokenRegistryToolsDeps): void {
       transferNames?: string[]
     }): Promise<CallToolResult> => {
       const normalizedChainType = chainType.trim().toLowerCase()
-      const chainIdStr = normalizeChainId(chainId)
       const normalizedContract = normalizeTokenContract(contract, normalizedChainType, tokenType)
+      const nodeKey = await mgtGET<string>("/getNodeKey")
 
-      const { selectedSigningKey, signingMessage, signature } = await prepareActionSignedManagementRequest(
+      const { selectedSigningKey, signingMessage, body } = await prepareSignedManagementRequest(
         signingDeps,
-        ({ selectedSigningKey }) => ({
-          nonce: selectedSigningKey.nonce,
-          chainType: normalizedChainType,
-          chainId: chainIdStr,
-          tokenType,
-          action: "addToken",
-        }),
+        ({ selectedSigningKey }) => {
+          const fields: Record<string, unknown> = {
+            chainType: normalizedChainType,
+            chainId,
+            tokenType,
+            contract: normalizedContract,
+          }
+          if (transferSig !== undefined && transferSig.length > 0) {
+            fields.transferSig = transferSig
+          }
+          if (transferNames !== undefined && transferNames.length > 0) {
+            fields.transferNames = transferNames
+          }
+          return buildManagementPostBody(selectedSigningKey.nonce, nodeKey, fields)
+        },
       )
 
-      const postBody: Record<string, unknown> = {
-        nonce: selectedSigningKey.nonce,
-        chainType: normalizedChainType,
-        chainId: chainId,
-        tokenType,
-        contract: normalizedContract,
-        signedMessage: signingMessage,
-        clientSig: signature,
-      }
-      if (transferSig !== undefined && transferSig.length > 0) {
-        postBody.transferSig = transferSig
-      }
-      if (transferNames !== undefined && transferNames.length > 0) {
-        postBody.transferNames = transferNames
-      }
-
-      const message = await mgtPOST<string>(TOKEN_REGISTRY_API_PATHS.add_to_token_registry, postBody)
+      const message = await mgtPOST<string>(TOKEN_REGISTRY_API_PATHS.add_to_token_registry, body)
       return {
         content: [{ type: "text", text: JSON.stringify({ message, selectedSigningKey, signingMessage }) }],
         structuredContent: { message, selectedSigningKey, signingMessage },
@@ -163,45 +156,31 @@ export function registerTokenRegistryTools(deps: TokenRegistryToolsDeps): void {
       tokenId?: string
     }): Promise<CallToolResult> => {
       const normalizedChainType = chainType.trim().toLowerCase()
-      const chainIdStr = normalizeChainId(chainId)
       const normalizedAddress = normalizeContractAddress(normalizedChainType, contractAddress)
 
       if (tokenType === "ERC721" && (tokenId === undefined || tokenId.trim().length === 0)) {
         throw toMcpApiError("tokenId is required when tokenType is ERC721", { tokenType, contractAddress })
       }
 
-      const { selectedSigningKey, signingMessage, signature } = await prepareActionSignedManagementRequest(
+      const nodeKey = await mgtGET<string>("/getNodeKey")
+
+      const { selectedSigningKey, signingMessage, body } = await prepareSignedManagementRequest(
         signingDeps,
         ({ selectedSigningKey }) => {
-          const payload: Record<string, unknown> = {
-            nonce: selectedSigningKey.nonce,
+          const fields: Record<string, unknown> = {
             chainType: normalizedChainType,
-            chainId: chainIdStr,
+            chainId,
             tokenType,
             contractAddress: normalizedAddress,
-            action: "removeToken",
           }
           if (tokenType === "ERC721" && tokenId !== undefined) {
-            payload.tokenId = tokenId.trim()
+            fields.tokenId = tokenId.trim()
           }
-          return payload
+          return buildManagementPostBody(selectedSigningKey.nonce, nodeKey, fields)
         },
       )
 
-      const postBody: Record<string, unknown> = {
-        nonce: selectedSigningKey.nonce,
-        chainType: normalizedChainType,
-        chainId: chainId,
-        tokenType,
-        contractAddress: normalizedAddress,
-        signedMessage: signingMessage,
-        clientSig: signature,
-      }
-      if (tokenType === "ERC721" && tokenId !== undefined) {
-        postBody.tokenId = tokenId.trim()
-      }
-
-      const message = await mgtPOST<string>(TOKEN_REGISTRY_API_PATHS.remove_from_token_registry, postBody)
+      const message = await mgtPOST<string>(TOKEN_REGISTRY_API_PATHS.remove_from_token_registry, body)
       return {
         content: [{ type: "text", text: JSON.stringify({ message, selectedSigningKey, signingMessage }) }],
         structuredContent: { message, selectedSigningKey, signingMessage },
@@ -237,10 +216,6 @@ export function registerTokenRegistryTools(deps: TokenRegistryToolsDeps): void {
       }
     },
   )
-}
-
-function normalizeChainId(chainId: string | number): string {
-  return typeof chainId === "number" ? String(chainId) : chainId.trim()
 }
 
 function normalizeContractAddress(chainType: string, address: string): string {

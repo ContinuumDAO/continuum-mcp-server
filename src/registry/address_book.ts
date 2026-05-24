@@ -17,11 +17,11 @@ import {
   type Sig,
 } from "../types.js"
 import {
-  buildClientSigManagementPostBody,
   prepareSignedManagementRequest,
   SIGNED_ROUTE_TOOL_NOTE,
   type ManagementKeyOption,
 } from "../management-signing-flow.js"
+import { buildManagementPostBody } from "../management-post-sig.js"
 
 type QueryParamValue = string | number | boolean | null | undefined
 type QueryParams = Record<string, QueryParamValue>
@@ -81,7 +81,7 @@ export function registerAddressBookTools(deps: AddressBookToolsDeps): void {
       isContract?: boolean
     }): Promise<CallToolResult> => {
       const nodeKey = await mgtGET<string>("/getNodeKey")
-      const { selectedSigningKey, signingMessage, signature, unsignedBody } =
+      const { selectedSigningKey, signingMessage, body } =
         await prepareSignedManagementRequest(
           {
             fetchManagementKeyOptions,
@@ -90,27 +90,21 @@ export function registerAddressBookTools(deps: AddressBookToolsDeps): void {
             signManagementMessage,
           },
           ({ selectedSigningKey }) => {
-            const body: Record<string, unknown> = {
-              nodeKey,
-              Nonce: selectedSigningKey.nonce,
-              Sig: "",
-              clientPk: selectedSigningKey.value,
+            const fields: Record<string, unknown> = {
               chainType: chainType.trim().toLowerCase(),
               address: normalizeKnownAddressForChain(chainType, address),
             }
             if (name !== undefined && name.length > 0) {
-              body.name = name
+              fields.name = name
             }
-            body.chainIds = chainIds ?? []
+            fields.chainIds = chainIds ?? []
             if (isContract !== undefined) {
-              body.isContract = isContract
+              fields.isContract = isContract
             }
-            return body
+            return buildManagementPostBody(selectedSigningKey.nonce, nodeKey, fields)
           },
         )
-      // /addKnownAddress expects signedMessage + clientSig (not Sig on the POST body).
-      const postBody = buildClientSigManagementPostBody(unsignedBody, signingMessage, signature)
-      const message = await mgtPOST<string>(ADDRESS_BOOK_REGISTRY_API_PATHS.add_to_address_book_registry, postBody)
+      const message = await mgtPOST<string>(ADDRESS_BOOK_REGISTRY_API_PATHS.add_to_address_book_registry, body)
       return {
         content: [{ type: "text", text: JSON.stringify({ message, selectedSigningKey, signingMessage }) }],
         structuredContent: { message, selectedSigningKey, signingMessage },
@@ -140,7 +134,7 @@ export function registerAddressBookTools(deps: AddressBookToolsDeps): void {
       address: string
     }): Promise<CallToolResult> => {
       const nodeKey = await mgtGET<string>("/getNodeKey")
-      const { selectedSigningKey, signingMessage, signature, unsignedBody } =
+      const { selectedSigningKey, signingMessage, body } =
         await prepareSignedManagementRequest(
           {
             fetchManagementKeyOptions,
@@ -148,17 +142,13 @@ export function registerAddressBookTools(deps: AddressBookToolsDeps): void {
             buildManagementSigningMessage,
             signManagementMessage,
           },
-          ({ selectedSigningKey }) => ({
-            nodeKey,
-            Nonce: selectedSigningKey.nonce,
-            Sig: "",
-            clientPk: selectedSigningKey.value,
-            chainType: chainType.trim().toLowerCase(),
-            address: normalizeKnownAddressForChain(chainType, address),
-          }),
+          ({ selectedSigningKey }) =>
+            buildManagementPostBody(selectedSigningKey.nonce, nodeKey, {
+              chainType: chainType.trim().toLowerCase(),
+              address: normalizeKnownAddressForChain(chainType, address),
+            }),
         )
-      const postBody = buildClientSigManagementPostBody(unsignedBody, signingMessage, signature)
-      const message = await mgtPOST<string>(ADDRESS_BOOK_REGISTRY_API_PATHS.remove_from_address_book_registry, postBody)
+      const message = await mgtPOST<string>(ADDRESS_BOOK_REGISTRY_API_PATHS.remove_from_address_book_registry, body)
       return {
         content: [{ type: "text", text: JSON.stringify({ message, selectedSigningKey, signingMessage }) }],
         structuredContent: { message, selectedSigningKey, signingMessage },

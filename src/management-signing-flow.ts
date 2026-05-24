@@ -1,4 +1,5 @@
 import type { Nonce, Sig } from "./types.js"
+import { messageToSignManagementBody, withManagementClientSig } from "./management-post-sig.js"
 
 export type ManagementKeyOption = {
   id: string
@@ -33,7 +34,10 @@ export const SIGNED_ROUTE_TOOL_NOTE =
 /**
  * Canonical management signing sequence for route tools:
  * fetchManagementKeyOptions → resolveManagementSigningKeyOption →
- * buildManagementSigningMessage → signManagementMessage.
+ * buildManagementSigningMessage → signManagementMessage → withManagementClientSig.
+ *
+ * `buildUnsignedBody` should return a full POST body including `{ nonce, clientSig: "", nodeKey }`
+ * (use `buildManagementPostBody` from management-post-sig.ts).
  */
 export async function prepareSignedManagementRequest(
   deps: ManagementSigningFlowDeps,
@@ -51,49 +55,6 @@ export async function prepareSignedManagementRequest(
     unsignedBody,
     signingMessage,
     signature,
-    body: { ...unsignedBody, Sig: signature },
+    body: withManagementClientSig(unsignedBody, signature),
   }
-}
-
-/**
- * POST body for management routes that validate `signedMessage` + `clientSig`
- * (e.g. /setPreferredSigner, /addKnownAddress, /removeKnownAddress) instead of inline `Sig`.
- */
-export function buildClientSigManagementPostBody(
-  unsignedBody: Record<string, unknown>,
-  signedMessage: string,
-  clientSig: Sig,
-): Record<string, unknown> {
-  const { Sig: _sig, ...fields } = unsignedBody
-  return { ...fields, signedMessage, clientSig }
-}
-
-/**
- * Canonical JSON for token registry routes (`/addToken`, `/removeToken`).
- * Matches API_IMPLEMENTATION.md: lowercase `nonce`, string `chainId`, `action` field.
- */
-export function buildTokenRegistrySigningMessage(payload: Record<string, unknown>): string {
-  return JSON.stringify(payload)
-}
-
-/**
- * Signed POST prep for action-json routes (token registry, etc.):
- * fetch → resolve → build action message → sign.
- */
-export async function prepareActionSignedManagementRequest(
-  deps: ManagementSigningFlowDeps,
-  buildSigningPayload: (ctx: { selectedSigningKey: ManagementKeyOption }) =>
-    | Record<string, unknown>
-    | Promise<Record<string, unknown>>,
-): Promise<{
-  selectedSigningKey: ManagementKeyOption
-  signingMessage: string
-  signature: Sig
-}> {
-  const keyOptions = await deps.fetchManagementKeyOptions()
-  const selectedSigningKey = await deps.resolveManagementSigningKeyOption(keyOptions)
-  const signingPayload = await buildSigningPayload({ selectedSigningKey })
-  const signingMessage = buildTokenRegistrySigningMessage(signingPayload)
-  const signature = await deps.signManagementMessage(selectedSigningKey, signingMessage)
-  return { selectedSigningKey, signingMessage, signature }
 }

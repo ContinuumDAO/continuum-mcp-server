@@ -22,6 +22,7 @@ import {
   SIGNED_ROUTE_TOOL_NOTE,
   type ManagementKeyOption,
 } from "./management-signing-flow.js"
+import { buildManagementPostBody } from "./management-post-sig.js"
 
 type QueryParamValue = string | number | boolean | null | undefined
 type QueryParams = Record<string, QueryParamValue>
@@ -116,16 +117,14 @@ export function registerKeyGenTools(deps: KeyGenToolsDeps): void {
           buildManagementSigningMessage,
           signManagementMessage,
         },
-        ({ selectedSigningKey }) => ({
-          nodeKey,
-          Nonce: selectedSigningKey.nonce,
-          Sig: "",
-          clientPk: selectedSigningKey.value,
-          threshold: gate - 1,
-          groupId,
-          msgCheck,
-          keyType,
-        }),
+        ({ selectedSigningKey }) =>
+          buildManagementPostBody(selectedSigningKey.nonce, nodeKey, {
+            clientPk: selectedSigningKey.value,
+            threshold: gate - 1,
+            groupId,
+            msgCheck,
+            keyType,
+          }),
       )
       const requestId = await mgtPOST<KeyGenId>("/keyGenRequest", body)
       return {
@@ -163,13 +162,11 @@ export function registerKeyGenTools(deps: KeyGenToolsDeps): void {
           buildManagementSigningMessage,
           signManagementMessage,
         },
-        ({ selectedSigningKey }) => ({
-          nodeKey,
-          Nonce: selectedSigningKey.nonce,
-          Sig: "",
-          clientPk: selectedSigningKey.value,
-          requestId,
-        }),
+        ({ selectedSigningKey }) =>
+          buildManagementPostBody(selectedSigningKey.nonce, nodeKey, {
+            clientPk: selectedSigningKey.value,
+            requestId,
+          }),
       )
       const message = await mgtPOST<string>("/keyGenRequestAgree", body)
       return {

@@ -54,16 +54,14 @@ Use this as the source of truth before any signed operation.
 
 ## Authorizing a new key
 
-`add_eddsa_management_key` requires:
+`add_eddsa_management_key`:
 
-- `newPublicKey` to add (hex or OpenSSH public key)
+- takes no arguments (the node generates the Ed25519 key pair server-side)
+- signs `{ nonce, clientSig, nodeKey }` with an existing authorized management key
+- POST `/addManagementKey`
+- returns `addedPublicKey`, `keySlot`, and `fileName` from the node response
 
-Flow:
-
-1. Resolve signer from preferred signer (`/getPreferredSigner`) or fallback local allowed key
-2. Build canonical body with `nodeKey`, `Nonce`, `Sig: ""`, and route fields
-3. Sign canonical message
-4. POST `/addManagementKey`
+Use `create_eddsa_management_keypair` only when you need a local key file before authorization is possible (bootstrap / offline generation). For normal operation, prefer `add_eddsa_management_key` so key files are written on the node under `KEY_ROOT/management_keys`.
 
 ## Preferred signer rules
 

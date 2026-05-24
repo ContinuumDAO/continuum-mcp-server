@@ -19,10 +19,11 @@ import {
   type Sig,
 } from "../types.js"
 import {
-  prepareActionSignedManagementRequest,
+  prepareSignedManagementRequest,
   SIGNED_ROUTE_TOOL_NOTE,
   type ManagementKeyOption,
 } from "../management-signing-flow.js"
+import { buildManagementPostBody } from "../management-post-sig.js"
 
 type QueryParamValue = string | number | boolean | null | undefined
 type QueryParams = Record<string, QueryParamValue>
@@ -90,70 +91,52 @@ export function registerChainRegistryTools(deps: ChainRegistryToolsDeps): void {
       const chainIdStr = normalizeChainId(input.chainId)
       const legacy = input.legacy ?? false
       const testnet = input.testnet ?? false
+      const nodeKey = await mgtGET<string>("/getNodeKey")
 
-      const { selectedSigningKey, signingMessage, signature } = await prepareActionSignedManagementRequest(
+      const { selectedSigningKey, signingMessage, body } = await prepareSignedManagementRequest(
         signingDeps,
-        ({ selectedSigningKey }) =>
-          buildPostChainDetailsSigningPayload({
-            nonce: selectedSigningKey.nonce,
+        ({ selectedSigningKey }) => {
+          const fields: Record<string, unknown> = {
             chainName: input.chainName.trim(),
-            chainId: chainIdStr,
+            chainId: input.chainId,
             rpcGateway: input.rpcGateway.trim(),
-            explorer: input.explorer?.trim(),
             legacy,
             testnet,
-            gasName: input.gasName?.trim(),
-            gasLimit: input.gasLimit,
-            baseFee: input.baseFee,
-            priorityFee: input.priorityFee,
-            baseFeeMultiplier: input.baseFeeMultiplier,
-            gasMultiplier: input.gasMultiplier,
-            gasPrice: input.gasPrice,
-            defaultGetSigFeeSpeed: input.defaultGetSigFeeSpeed,
-          }),
+          }
+          if (input.explorer !== undefined && input.explorer.length > 0) {
+            fields.explorer = input.explorer.trim()
+          }
+          if (input.gasName !== undefined && input.gasName.length > 0) {
+            fields.gasName = input.gasName.trim()
+          }
+          if (input.gasLimit !== undefined) {
+            fields.gasLimit = input.gasLimit
+          }
+          if (input.baseFee !== undefined) {
+            fields.baseFee = input.baseFee
+          }
+          if (input.priorityFee !== undefined) {
+            fields.priorityFee = input.priorityFee
+          }
+          if (input.baseFeeMultiplier !== undefined) {
+            fields.baseFeeMultiplier = input.baseFeeMultiplier
+          }
+          if (input.gasMultiplier !== undefined) {
+            fields.gasMultiplier = input.gasMultiplier
+          }
+          if (input.gasPrice !== undefined) {
+            fields.gasPrice = input.gasPrice
+          }
+          if (input.defaultGetSigFeeSpeed !== undefined) {
+            fields.defaultGetSigFeeSpeed = input.defaultGetSigFeeSpeed
+          }
+          return buildManagementPostBody(selectedSigningKey.nonce, nodeKey, fields)
+        },
       )
 
-      const postBody: Record<string, unknown> = {
-        nonce: selectedSigningKey.nonce,
-        chainName: input.chainName.trim(),
-        chainId: input.chainId,
-        rpcGateway: input.rpcGateway.trim(),
-        legacy,
-        testnet,
-        signedMessage: signingMessage,
-        clientSig: signature,
-      }
-      if (input.explorer !== undefined && input.explorer.length > 0) {
-        postBody.explorer = input.explorer.trim()
-      }
-      if (input.gasName !== undefined && input.gasName.length > 0) {
-        postBody.gasName = input.gasName.trim()
-      }
-      if (input.gasLimit !== undefined) {
-        postBody.gasLimit = input.gasLimit
-      }
-      if (input.baseFee !== undefined) {
-        postBody.baseFee = input.baseFee
-      }
-      if (input.priorityFee !== undefined) {
-        postBody.priorityFee = input.priorityFee
-      }
-      if (input.baseFeeMultiplier !== undefined) {
-        postBody.baseFeeMultiplier = input.baseFeeMultiplier
-      }
-      if (input.gasMultiplier !== undefined) {
-        postBody.gasMultiplier = input.gasMultiplier
-      }
-      if (input.gasPrice !== undefined) {
-        postBody.gasPrice = input.gasPrice
-      }
-      if (input.defaultGetSigFeeSpeed !== undefined) {
-        postBody.defaultGetSigFeeSpeed = input.defaultGetSigFeeSpeed
-      }
-
-      const message = await mgtPOST<string>(CHAIN_REGISTRY_API_PATHS.add_to_chain_registry, postBody)
+      const message = await mgtPOST<string>(CHAIN_REGISTRY_API_PATHS.add_to_chain_registry, body)
       return {
-        content: [{ type: "text", text: JSON.stringify({ message, selectedSigningKey, signingMessage }) }],
+        content: [{ type: "text", text: JSON.stringify({ message, selectedSigningKey, signingMessage, chainId: chainIdStr }) }],
         structuredContent: { message, selectedSigningKey, signingMessage },
       }
     },
@@ -173,25 +156,15 @@ export function registerChainRegistryTools(deps: ChainRegistryToolsDeps): void {
       }),
     },
     async ({ chainId }: { chainId: string | number }): Promise<CallToolResult> => {
-      const chainIdStr = normalizeChainId(chainId)
+      const nodeKey = await mgtGET<string>("/getNodeKey")
 
-      const { selectedSigningKey, signingMessage, signature } = await prepareActionSignedManagementRequest(
+      const { selectedSigningKey, signingMessage, body } = await prepareSignedManagementRequest(
         signingDeps,
-        ({ selectedSigningKey }) => ({
-          nonce: selectedSigningKey.nonce,
-          chainId: chainIdStr,
-          action: "removeChainDetails",
-        }),
+        ({ selectedSigningKey }) =>
+          buildManagementPostBody(selectedSigningKey.nonce, nodeKey, { chainId }),
       )
 
-      const postBody = {
-        nonce: selectedSigningKey.nonce,
-        chainId,
-        signedMessage: signingMessage,
-        clientSig: signature,
-      }
-
-      const message = await mgtPOST<string>(CHAIN_REGISTRY_API_PATHS.remove_from_chain_registry, postBody)
+      const message = await mgtPOST<string>(CHAIN_REGISTRY_API_PATHS.remove_from_chain_registry, body)
       return {
         content: [{ type: "text", text: JSON.stringify({ message, selectedSigningKey, signingMessage }) }],
         structuredContent: { message, selectedSigningKey, signingMessage },
@@ -242,64 +215,6 @@ function normalizeGetChainDetailsResponse(raw: unknown): z.infer<typeof ChainReg
 
 function normalizeChainId(chainId: string | number): string {
   return typeof chainId === "number" ? String(chainId) : chainId.trim()
-}
-
-/**
- * Canonical JSON for `POST /postChainDetails` signedMessage (per API_IMPLEMENTATION.md example).
- */
-function buildPostChainDetailsSigningPayload(fields: {
-  nonce: number
-  chainName: string
-  chainId: string
-  rpcGateway: string
-  explorer?: string
-  legacy: boolean
-  testnet: boolean
-  gasName?: string
-  gasLimit?: number
-  baseFee?: number | null
-  priorityFee?: number | null
-  baseFeeMultiplier?: number
-  gasMultiplier?: number
-  gasPrice?: number
-  defaultGetSigFeeSpeed?: DefaultGetSigFeeSpeed
-}): Record<string, unknown> {
-  const payload: Record<string, unknown> = {
-    nonce: fields.nonce,
-    chainName: fields.chainName,
-    chainId: fields.chainId,
-    rpcGateway: fields.rpcGateway,
-    legacy: fields.legacy,
-    testnet: fields.testnet,
-  }
-  if (fields.explorer !== undefined && fields.explorer.length > 0) {
-    payload.explorer = fields.explorer
-  }
-  if (fields.gasName !== undefined && fields.gasName.length > 0) {
-    payload.gasName = fields.gasName
-  }
-  if (fields.gasLimit !== undefined) {
-    payload.gasLimit = fields.gasLimit
-  }
-  if (fields.baseFee !== undefined) {
-    payload.baseFee = fields.baseFee
-  }
-  if (fields.priorityFee !== undefined) {
-    payload.priorityFee = fields.priorityFee
-  }
-  if (fields.baseFeeMultiplier !== undefined) {
-    payload.baseFeeMultiplier = fields.baseFeeMultiplier
-  }
-  if (fields.gasMultiplier !== undefined) {
-    payload.gasMultiplier = fields.gasMultiplier
-  }
-  if (fields.gasPrice !== undefined) {
-    payload.gasPrice = fields.gasPrice
-  }
-  if (fields.defaultGetSigFeeSpeed !== undefined) {
-    payload.defaultGetSigFeeSpeed = fields.defaultGetSigFeeSpeed
-  }
-  return payload
 }
 
 export async function loadNetworksRegistry(): Promise<void> {
