@@ -40,7 +40,7 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
-    "@continuumdao/continuum-node-sdk": "file:../continuum-node-sdk",
+    "@continuumdao/continuum-node-sdk": "^1.2.3",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "express": "^5.2.1",
     "ethers": "^6.16.0",
