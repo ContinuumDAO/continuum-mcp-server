@@ -245,8 +245,10 @@ export async function listLocalManagementPublicKeys(
   return results
 }
 
+import { messageToSignManagementBody } from "../management-post-sig.js"
+
 export function buildManagementSigningMessage(bodyWithEmptySig: Record<string, unknown>): string {
-  return JSON.stringify({ ...bodyWithEmptySig, clientSig: "" })
+  return messageToSignManagementBody(bodyWithEmptySig)
 }
 
 export async function signManagementMessage(

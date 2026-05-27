@@ -49,7 +49,7 @@ Every signed route tool uses the same server implementation:
 1. `fetchManagementKeyOptions`
 2. `resolveManagementSigningKeyOption`
 3. Build unsigned body with `{ nonce, clientSig: "", nodeKey }` plus route fields (`buildManagementPostBody`)
-4. `messageToSignManagementBody` — canonical JSON with `clientSig` cleared
+4. `messageToSignManagementBody` — SDK canonical JSON (`nonce`, `clientSig`, `nodeKey` first; remaining keys sorted; `clientSig` cleared)
 5. `signManagementMessage`
 6. POST with `clientSig` set on the same JSON body
 
